@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lighthouse Settings</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-title">
+      <h1>Lighthouse</h1>
+      <span class="version">v1.3</span>
+    </div>
+    <div class="site-toggle-wrapper" id="site-toggle-row">
+      <span id="current-site" class="site-label" title="Toggle for this site">Loading...</span>
+      <label class="switch">
+        <input type="checkbox" id="toggle-site">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="menu">Buttons</div>
+    <div class="tab" data-tab="search">Search</div>
+    <div class="tab" data-tab="shortcuts">Shortcuts</div>
+    <div class="tab" data-tab="settings">Options</div>
+  </div>
+
+  <!-- TAB: BUTTONS -->
+  <div id="tab-menu" class="tab-content active">
+    <div class="section-desc">Choose which buttons appear in the tooltip. Drag to reorder.</div>
+    <div class="card"><ul id="button-list" class="button-list"></ul></div>
+  </div>
+
+  <!-- TAB: SEARCH -->
+  <div id="tab-search" class="tab-content">
+    <div class="section-desc">Configure search providers for the Search button.</div>
+    <div class="card"><ul id="search-list" class="button-list"></ul></div>
+    <div id="add-trigger" class="add-trigger">+ Add Search Engine</div>
+    <div id="add-form" class="add-engine-form">
+      <div class="form-row"><input type="text" id="new-name" class="form-input" placeholder="Name (e.g. Bing)"></div>
+      <div class="form-row"><input type="text" id="new-url" class="form-input" placeholder="URL (e.g. bing.com?q=%s)"></div>
+      <div class="form-row">
+        <button id="cancel-add" class="btn">Cancel</button>
+        <button id="save-add" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: SHORTCUTS -->
+  <div id="tab-shortcuts" class="tab-content">
+    <div class="section-desc">Type //trigger then Space to expand text.</div>
+    <div class="card"><ul id="shortcuts-list" class="button-list"></ul></div>
+    <div id="add-shortcut-trigger" class="add-trigger">+ Add Shortcut</div>
+    <div id="add-shortcut-form" class="add-engine-form">
+      <div class="form-row">
+        <span class="shortcut-prefix">//</span>
+        <input type="text" id="new-shortcut-trigger" class="form-input" placeholder="trigger (e.g. em)" maxlength="10">
+      </div>
+      <div class="form-row">
+        <textarea id="new-shortcut-expansion" class="form-input" placeholder="Expansion text (e.g. my@email.com)" rows="3" maxlength="500"></textarea>
+      </div>
+      <div class="form-row">
+        <button id="cancel-add-shortcut" class="btn">Cancel</button>
+        <button id="save-add-shortcut" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: OPTIONS -->
+  <div id="tab-settings" class="tab-content">
+    <div class="section-title">Behavior</div>
+    <div class="card">
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="title">Auto-Select Words</span>
+          <span class="desc">Snap selection to whole words</span>
+        </div>
+        <label class="switch"><input type="checkbox" id="toggle-snapping"><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="title">Drag Handles</span>
+          <span class="desc">Show handles for text selection</span>
+        </div>
+        <label class="switch"><input type="checkbox" id="toggle-handles"><span class="slider"></span></label>
+      </div>
+
+    </div>
+
+    <div class="section-title">Region & Format</div>
+    <div class="card">
+      <div class="standards-grid" style="padding: 10px 0;">
+        <div class="standard-item">
+          <span class="standard-label">Language</span>
+          <div class="select-wrapper"><select id="std-lang" class="standard-select"></select></div>
+        </div>
+        <div class="standard-item">
+          <span class="standard-label">Currency</span>
+          <div class="select-wrapper"><select id="std-curr" class="standard-select"></select></div>
+        </div>
+        <div class="standard-item standard-item--full">
+          <span class="standard-label">Units</span>
+          <div class="select-wrapper">
+            <select id="std-units" class="standard-select">
+              <option value="metric">Metric (km, kg, °C)</option>
+              <option value="imperial">Imperial (mi, lbs, °F)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Appearance</div>
+    <div class="card" style="padding: 10px 12px;">
+      <div class="theme-toggle">
+        <button id="theme-light-btn" class="theme-btn">Light</button>
+        <button id="theme-dark-btn" class="theme-btn">Dark</button>
+      </div>
+    </div>
+
+    <details class="dev-details">
+      <summary class="dev-summary">Developer Options</summary>
+      <div class="dev-body">
+        <div class="card">
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="title">Debug Mode</span>
+              <span class="desc">Log events to console</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="toggle-debug"><span class="slider"></span></label>
+          </div>
+        </div>
+        <div class="dev-row">
+          <span class="standard-label">Custom CSS</span>
+          <textarea id="custom-css-input" class="css-editor" spellcheck="false" placeholder="/* Enter custom CSS here */"></textarea>
+          <div class="dev-footer"><button id="save-css-btn" class="btn btn-sm btn-primary">Save CSS</button></div>
+        </div>
+        <div class="dev-row dev-row--bordered">
+          <span class="standard-label">Backup & Restore</span>
+          <div class="dev-actions">
+            <button id="export-settings-btn" class="btn btn-sm">Export</button>
+            <button id="import-settings-btn" class="btn btn-sm">Import</button>
+            <input type="file" id="import-file-input" accept=".json" style="display:none;">
+          </div>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="footer">Lighthouse v1.3</div>
+
+  <script src="../utils/utils.js"></script>
+  <script src="../utils/data.js"></script>
+  <script src="../modules/math.js"></script>
+  <script src="../modules/actions.js"></script>
+  <script src="../utils/config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

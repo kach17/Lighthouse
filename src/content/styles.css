@@ -1,0 +1,167 @@
+/*
+  Lighthouse - Extension Styles
+  Single source of truth for design tokens and tooltip/overlay components.
+  popup.css inherits these tokens via the injected <style> tag.
+*/
+
+:root, :host {
+    --so-bg: rgba(17, 24, 39, 0.95);
+    --so-border: rgba(55, 65, 81, 0.5);
+    --so-text-color: #e5e7eb;
+    --so-text-sub: #9ca3af;
+    --so-accent: #6366f1;
+    --so-accent-text: #ffffff;
+    --so-hover-bg: #374151;
+    --so-hover-text: var(--so-text-color);
+
+    --so-color-danger: #fca5a5;
+    --so-color-warning: #fde047;
+    --so-color-success: #86efac;
+    --so-color-info: #93c5fd;
+
+    --so-z-tooltip: 100;
+    --so-z-popover: 200;
+    --so-z-toast: 300;
+    --so-z-handle: 400;
+
+    --so-radius: 12px;
+    --so-border-width: 1px;
+    --so-btn-size: 32px;
+    --so-icon-size: 16px;
+    --so-spacing: 4px;
+    --so-padding: 6px 12px;
+    --so-preview-width: 180px;
+    --so-arrow-size: 7px;
+    --so-scale: 1;
+    --so-font-family: sans-serif;
+    --so-font-size: 14px;
+    --so-shadow: 0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -2px rgba(0,0,0,0.1);
+    --so-backdrop-blur: 4px;
+
+    --so-anim-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --so-anim-duration: 0.25s;
+    --so-transition-base: background-color 0.15s, transform 0.1s, opacity 0.15s;
+    --so-transition-smooth: opacity 0.18s ease-out, transform var(--so-anim-duration) var(--so-anim-ease);
+    --so-transition-position: top 0.1s linear, left 0.1s linear;
+}
+
+/* Markers */
+.lighthouse-marker-highlight { /* styling handled via inline styles in JS */ }
+.marker-scrollbar-hint { position: fixed; right: 1px; z-index: 2147483646 !important; width: 15px !important; opacity: 0.55; outline: 1px solid lightgrey; cursor: pointer; transition: width 200ms ease; }
+.marker-scrollbar-hint:hover { opacity: 1; }
+.marker-scrollbar-hint .marker-scrollbar-tooltip { position: absolute; bottom: 0; right: 120%; z-index: 2147483647 !important; width: max-content !important; padding: 12px !important; visibility: hidden; opacity: 0; background-color: #555 !important; color: white !important; border-radius: 6px; font-size: 12px !important; text-align: start !important; pointer-events: none !important; transition: opacity 250ms, visibility 250ms !important; }
+.marker-scrollbar-hint .marker-scrollbar-tooltip.marker-scrollbar-tooltip-bottom { bottom: unset !important; top: 0 !important; }
+.marker-scrollbar-hint:hover .marker-scrollbar-tooltip { visibility: visible; opacity: 0.8; transition-delay: 100ms; }
+.marker-highlight-delete-floating { position: absolute; z-index: 2147483647 !important; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-family: var(--so-font-family); font-size: 14px; line-height: 1; background-color: var(--so-bg); color: var(--so-text-sub); border: 1px solid var(--so-border); box-shadow: 0 2px 5px rgba(0,0,0,0.15); cursor: pointer; user-select: none; transition: all 0.15s ease; backdrop-filter: blur(4px); }
+.marker-highlight-delete-floating:hover { background-color: var(--so-hover-bg); color: var(--so-text-color); border-color: var(--so-text-sub); transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.25); }
+
+/* Main Tooltip
+   Entrance: scaleX from center so it feels grounded to the selection,
+   combined with a short vertical lift. Spring easing gives it snap. */
+#lighthouse-extension-tooltip {
+  position: fixed; display: flex; align-items: center; gap: var(--so-spacing); padding: var(--so-padding);
+  border-radius: var(--so-radius); transform-origin: center bottom;
+  background-color: var(--so-bg); border: var(--so-border-width) solid var(--so-border);
+  box-shadow: var(--so-shadow); backdrop-filter: blur(var(--so-backdrop-blur)); -webkit-backdrop-filter: blur(var(--so-backdrop-blur));
+  opacity: 0; pointer-events: none;
+  transform: translateX(-50%) translateY(6px) scaleX(0.92);
+  transition: var(--so-transition-smooth), var(--so-transition-position);
+  z-index: var(--so-z-tooltip);
+}
+#lighthouse-extension-tooltip.visible { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0) scaleX(var(--so-scale)); }
+#lighthouse-extension-tooltip.mode-top, #lighthouse-extension-tooltip.mode-sticky-bottom { transform-origin: center bottom; }
+#lighthouse-extension-tooltip.mode-bottom, #lighthouse-extension-tooltip.mode-sticky-top { transform-origin: center top; }
+#lighthouse-extension-tooltip.mode-bottom:not(.visible), #lighthouse-extension-tooltip.mode-sticky-top:not(.visible) { transform: translateX(-50%) translateY(-6px) scaleX(0.92); }
+
+/* Arrows */
+#lighthouse-extension-tooltip::before, #lighthouse-extension-tooltip::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); border-style: solid; pointer-events: none; }
+#lighthouse-extension-tooltip.mode-top::before, #lighthouse-extension-tooltip.mode-sticky-bottom::before { top: 100%; border-width: var(--so-arrow-size); border-color: var(--so-border) transparent transparent transparent; }
+#lighthouse-extension-tooltip.mode-top::after, #lighthouse-extension-tooltip.mode-sticky-bottom::after { top: 100%; border-width: calc(var(--so-arrow-size) - var(--so-border-width)); border-color: var(--so-bg) transparent transparent transparent; margin-top: calc(-1 * var(--so-border-width)); }
+#lighthouse-extension-tooltip.mode-bottom::before, #lighthouse-extension-tooltip.mode-sticky-top::before { bottom: 100%; border-width: var(--so-arrow-size); border-color: transparent transparent var(--so-border) transparent; }
+#lighthouse-extension-tooltip.mode-bottom::after, #lighthouse-extension-tooltip.mode-sticky-top::after { bottom: 100%; border-width: calc(var(--so-arrow-size) - var(--so-border-width)); border-color: transparent transparent var(--so-bg) transparent; margin-bottom: calc(-1 * var(--so-border-width)); }
+
+#lighthouse-extension-tooltip.mode-top .lighthouse-preview:not(.is-link),
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-preview:not(.is-link) { display: none !important; }
+#lighthouse-extension-tooltip .lighthouse-popover .lighthouse-preview { display: flex !important; }
+#lighthouse-extension-tooltip.mode-top .lighthouse-separator:nth-child(2),
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-separator:nth-child(2) { display: none !important; }
+
+/* Preview — not italic, slightly brighter so it reads as useful info not decoration */
+.lighthouse-preview { color: var(--so-text-color); opacity: 0.65; font-size: calc(var(--so-font-size) - 2px); font-family: var(--so-font-family); white-space: nowrap; max-width: var(--so-preview-width); overflow: hidden; text-overflow: ellipsis; align-items: center; gap: 6px; display: flex; position: relative; mask-image: linear-gradient(to right, transparent 0px, black 12px, black calc(100% - 12px), transparent 100%); -webkit-mask-image: linear-gradient(to right, transparent 0px, black 12px, black calc(100% - 12px), transparent 100%); }
+.lighthouse-preview:hover { opacity: 0.9; }
+.lighthouse-scroll-text { display: inline-block; vertical-align: middle; transition: color 0.2s; }
+.lighthouse-preview:hover .lighthouse-scroll-text { animation: lighthouse-pan 4s linear infinite alternate; animation-delay: 0.5s; }
+@keyframes lighthouse-pan {
+  0%, 15% { transform: translateX(0); }
+  100% { transform: translateX(min(0px, calc(-100% + var(--so-preview-width) - 24px))); }
+}
+
+/* Separator */
+.lighthouse-separator { width: 1px; height: calc(var(--so-btn-size) * 0.5); background-color: var(--so-hover-bg); margin: 0 calc(var(--so-spacing) * 2); display: block; }
+.lighthouse-separator:last-child { display: none !important; }
+
+/* Chip */
+.lighthouse-chip { display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600; background: var(--so-hover-bg); color: var(--so-text-sub); border: 1px solid var(--so-border); white-space: nowrap; }
+.lighthouse-chip.accent { background: var(--so-accent); color: var(--so-accent-text); border-color: var(--so-accent); }
+
+/* Popover */
+.lighthouse-popover {
+  position: absolute; background-color: var(--so-bg); border: var(--so-border-width) solid var(--so-border);
+  backdrop-filter: blur(var(--so-backdrop-blur)); -webkit-backdrop-filter: blur(var(--so-backdrop-blur));
+  border-radius: var(--so-radius); padding: var(--so-padding); gap: var(--so-spacing); box-shadow: var(--so-shadow);
+  opacity: 0; transition: opacity 0.2s ease-out, transform 0.2s ease-out; pointer-events: none;
+  z-index: var(--so-z-popover); bottom: 100%; left: 50%; transform: translateX(-50%) translateY(5px);
+  margin-bottom: 10px; min-width: 60px; width: max-content; display: flex; align-items: center; justify-content: center;
+}
+.lighthouse-popover::before { content: ''; position: absolute; top: 100%; left: 0; right: 0; height: 20px; background: transparent; z-index: -1; }
+.lighthouse-popover.visible { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.lighthouse-popover::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border-width: 6px; border-style: solid; border-color: var(--so-bg) transparent transparent transparent; margin-top: -1px; z-index: 2; }
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover { bottom: auto; top: 100%; margin-bottom: 0; margin-top: 10px; transform: translateX(-50%) translateY(-5px); }
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover.visible, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover.visible { transform: translateX(-50%) translateY(0); }
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover::after, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover::after { top: auto; bottom: 100%; border-color: transparent transparent var(--so-bg) transparent; margin-top: 0; margin-bottom: -1px; }
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover::before, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover::before { top: auto; bottom: 100%; height: 20px; }
+.lighthouse-popover .lighthouse-preview { max-width: 500px; --so-preview-width: 500px; display: flex !important; }
+.lighthouse-popover img.qr-code { display: block; background: white; padding: 4px; border-radius: 4px; width: 100px; height: 100px; }
+
+/* Toast */
+.lighthouse-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background-color: var(--so-bg); color: var(--so-text-color); border: var(--so-border-width) solid var(--so-border); padding: 8px 16px; border-radius: 8px; font-size: 12px; font-family: var(--so-font-family); z-index: var(--so-z-toast); box-shadow: var(--so-shadow); backdrop-filter: blur(var(--so-backdrop-blur)); -webkit-backdrop-filter: blur(var(--so-backdrop-blur)); animation: slideUp 0.3s ease-out; display: flex; align-items: center; gap: 8px; }
+.lighthouse-toast.fade-out { opacity: 0; transition: opacity 0.3s; }
+.lighthouse-toast.success { border-color: var(--so-color-success); }
+.lighthouse-toast.error { border-color: var(--so-color-danger); }
+@keyframes slideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Buttons — hover is background-color only, no stacked filter/opacity */
+.lighthouse-btn, .lighthouse-paste-btn { position: relative; display: flex; align-items: center; justify-content: center; border-radius: var(--so-radius); border: none; background: transparent; color: var(--so-text-color); cursor: pointer; transition: background-color 0.15s, transform 0.1s; padding: 0; }
+.lighthouse-btn:hover, .lighthouse-paste-btn:hover { background-color: var(--so-hover-bg); color: var(--so-hover-text); filter: none; opacity: 1; }
+.lighthouse-btn:active, .lighthouse-paste-btn:active { transform: scale(0.88); }
+.lighthouse-btn svg, .lighthouse-btn img, .lighthouse-paste-btn svg, .lighthouse-paste-btn img { width: var(--so-icon-size); height: var(--so-icon-size); pointer-events: none; }
+.lighthouse-btn { width: var(--so-btn-size); height: var(--so-btn-size); }
+.lighthouse-paste-btn { justify-content: flex-start; height: var(--so-btn-size); padding: 0 12px; font-size: calc(var(--so-font-size) - 1px); font-family: var(--so-font-family); white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.lighthouse-paste-btn span { opacity: 0.9; }
+
+.lighthouse-label { position: absolute; bottom: calc(var(--so-btn-size) * -1 + 4px); left: 50%; transform: translateX(-50%); background-color: #000; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; opacity: 0; pointer-events: none; white-space: nowrap; transition: opacity 0.15s 0.3s; font-family: var(--so-font-family); font-weight: 500; z-index: 10; }
+.lighthouse-btn:hover .lighthouse-label { opacity: 1; }
+.lighthouse-popover .lighthouse-label { bottom: -28px; z-index: 30; }
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-label, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-label { bottom: auto; top: -30px; }
+#lighthouse-extension-tooltip .lighthouse-btn:has(.lighthouse-popover) .lighthouse-label { opacity: 0 !important; }
+
+#lighthouse-extension-tooltip .lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: 20px; background: transparent; z-index: 10; pointer-events: auto; }
+#lighthouse-extension-tooltip.mode-top .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-bottom .lighthouse-btn.has-popover::after { bottom: 100%; }
+#lighthouse-extension-tooltip.mode-bottom .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-btn.has-popover::after { top: 100%; }
+
+/* Drag handles — line clears selection edge, circle centered on the stick. */
+.lighthouse-tooltip-draghandle { position: fixed; left: 0; top: 0; z-index: 2147483647; pointer-events: auto; }
+.lighthouse-tooltip-draghandle-line { position: absolute; left: 0; width: 2px; background: var(--so-accent); border-radius: 2px; }
+.lighthouse-tooltip-draghandle-circle { position: absolute; width: 14px; height: 14px; background: var(--so-accent); border: 1.5px solid #ffffff; border-radius: 50% !important; z-index: 2147483647; box-shadow: 0 2px 5px rgba(0,0,0,0.25); transition: transform 0.15s ease, opacity 0.2s ease-out; }
+.lighthouse-tooltip-draghandle-circle:hover { transform: scale(1.25); }
+/* Text-only popover buttons (e.g. spellcheck suggestions) */
+#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn { width: auto; padding: 4px 10px; border-radius: var(--so-radius); }
+#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn .lighthouse-label { display: block; position: static; opacity: 1; transform: none; background: transparent; box-shadow: none; color: var(--so-text-color); font-size: 13px; padding: 0; pointer-events: auto; transition: none; }
+#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn svg,
+#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn img { display: none; }
+
+/* Converted text */
+.lighthouse-converted, .lighthouse-converted-price { border-bottom: 1px dashed var(--so-accent); cursor: help; }
