@@ -86,8 +86,10 @@
         // Populate the CSS editor. Fall back to the active theme preset if empty.
         const activeMode = currentState.themeMode || 'dark';
         const storedCSS  = currentState.customStyles || '';
-        input.value = storedCSS || Data.cssFromTheme(Data.THEMES[activeMode]);
-        sharedStyle.textContent = storedCSS;
+        const defaultCSS = Data.cssFromTheme(Data.THEMES[activeMode]);
+        
+        input.value = storedCSS || defaultCSS;
+        sharedStyle.textContent = storedCSS || defaultCSS;
 
         // Highlight the correct preset button
         const syncButtons = (mode) => {

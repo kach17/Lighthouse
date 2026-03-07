@@ -284,6 +284,32 @@
             return textLang !== tgt;
         }
         return src !== tgt;
+    },
+
+    /**
+     * Standardized Lifecycle Logger
+     */
+    logEvent: (component, event, details = '') => {
+        if (!logger.isDebug) return;
+
+        const State = window.LighthouseState;
+        const UI = window.LighthouseUI;
+        const Handles = window.LighthouseHandles;
+
+        const comp = component.toUpperCase().padEnd(8, ' ');
+        const evt = event.toUpperCase().padEnd(10, ' ');
+
+        console.groupCollapsed(`[Lighthouse] ${comp}| ${evt}| ${details}`);
+        
+        console.log({
+            Mode: State?.mode,
+            Context: State?.ctx ? { tag: State.ctx.element?.tagName, isInput: State.ctx.isInput } : 'N/A',
+            UI: UI?.isVisible ? 'VISIBLE' : 'HIDDEN',
+            Handles: Handles?.areVisible ? 'VISIBLE' : 'HIDDEN',
+            Actions: State?.activeActions?.length || 0
+        });
+        
+        console.groupEnd();
     }
   };
 })();

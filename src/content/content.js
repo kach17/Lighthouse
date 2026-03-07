@@ -25,6 +25,7 @@
       $.EventManager.add(document, 'input', (e) => {
           if ((UI.isActionActive && UI.isActionActive()) || UI.contains(e.target)) return;
           UI.destroy();
+          if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
       }, true);
       
       // Link Hover
@@ -50,7 +51,7 @@
                   if (newCtx.hasText || (newCtx.isInput && newCtx.isEmptyInput)) {
                       State.update(newCtx);
                       UI.render(State);
-                      if (window.LighthouseHandles && newCtx.hasText && !newCtx.isInput) {
+                      if (window.LighthouseHandles && newCtx.hasText) {
                           window.LighthouseHandles.setDragHandles();
                       }
                   }
@@ -194,7 +195,7 @@
               if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
           } else {
               UI.render(State);
-              if (window.LighthouseHandles && ctx.hasText && !ctx.isInput) {
+              if (window.LighthouseHandles && ctx.hasText) {
                   window.LighthouseHandles.setDragHandles();
               }
           }

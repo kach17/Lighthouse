@@ -70,7 +70,7 @@
         lastState = State;
         const { settings, ctx, activeActions } = State;
         
-        $.Logger.log(`UI Render: ${State.mode} (${activeActions.length} actions)`);
+        $.logEvent('UI', 'RENDER', `${State.mode} (${activeActions.length} actions)`);
 
         // 1. Apply Theme
         const styleTag = shadowRoot.getElementById('lighthouse-user-styles');
@@ -448,7 +448,7 @@
 
     function destroy() {
         if (tooltipContainer && tooltipContainer.classList.contains('visible')) {
-            $.Logger.log('UI Destroy');
+            $.logEvent('UI', 'DESTROY', 'Tooltip Hidden');
             tooltipContainer.classList.remove('visible');
         }
     }
@@ -469,6 +469,7 @@
         contains: (t) => document.getElementById(HOST_ID)?.contains(t), 
         showToast, 
         isActionActive: () => actionActive,
-        get shadowRoot() { return shadowRoot; }
+        get shadowRoot() { return shadowRoot; },
+        get isVisible() { return tooltipContainer && tooltipContainer.classList.contains('visible'); }
     };
 })();

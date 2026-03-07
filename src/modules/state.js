@@ -68,13 +68,13 @@
             if (rawCtx.isLink) {
                 this.mode = 'LINK';
                 this.activeActions = this._filterActions('link');
-                Logger.log(`Mode Changed: LINK (Link: ${rawCtx.linkUrl})`);
+                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'LINK');
                 return;
             }
 
             // 3. Empty Context (No text, no input) -> HIDDEN
             if (!rawCtx.hasText && !rawCtx.isInput) {
-                if (this.mode !== 'HIDDEN') Logger.log('Mode Changed: HIDDEN (Empty Context)');
+                if (this.mode !== 'HIDDEN') global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (Empty)');
                 this.mode = 'HIDDEN';
                 this.activeActions = [];
                 return;
@@ -85,12 +85,36 @@
                 // Case A: Text is selected INSIDE the input. 
                 // Always show tooltip (Copy/Cut/etc).
                 if (rawCtx.hasText) {
-                    this.activeActions = this._filterActions('input'); // or selection actions allowed in input
+                    const inputActions = this._filterActions('input');
+                    const smartActions = this._filterActions('smart');
+                    // REMOVED: const selectionActions = this._filterActions('selection');
+                    // Selection actions (like Search, Translate) often don't work well with Input text 
+                    // or are redundant with Input actions.
+                    
+                    let combined = [...inputActions, ...smartActions];
+                    combined = [...new Set(combined)];
+                    
+                    combined.sort((a, b) => {
+                        if (this.ctx.semanticType) {
+                            const aMatch = a.semantic === this.ctx.semanticType;
+                            const bMatch = b.semantic === this.ctx.semanticType;
+                            if (aMatch && !bMatch) return -1;
+                            if (!aMatch && bMatch) return 1;
+                        }
+                        const idxA = this.settings.order.indexOf(a.id);
+                        const idxB = this.settings.order.indexOf(b.id);
+                        if (idxA === -1 && idxB === -1) return 0;
+                        if (idxA === -1) return 1;
+                        if (idxB === -1) return -1;
+                        return idxA - idxB;
+                    });
+                    
+                    this.activeActions = combined;
                     this.mode = 'INPUT';
                     // We DO NOT reset lastFocusedInput here. 
                     // If user selects text, then clicks again to collapse, we want Case B (Second Click) to fire and hide it.
                     this.lastFocusedInput = rawCtx.element; 
-                    Logger.log('Mode Changed: INPUT (Text Selected)');
+                    global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'INPUT (Text Selected)');
                     return;
                 }
 
@@ -101,7 +125,7 @@
                     // HIDE IT.
                     this.mode = 'HIDDEN';
                     this.activeActions = [];
-                    Logger.log('Mode Changed: HIDDEN (Input Re-focus)');
+                    global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (Re-focus)');
                     return;
                 } else {
                     // User clicked a NEW input (or first time).
@@ -110,10 +134,10 @@
                     if (this.activeActions.length > 0) {
                         this.mode = 'INPUT';
                         this.lastFocusedInput = rawCtx.element; // Mark as seen
-                        Logger.log('Mode Changed: INPUT (First Focus)');
+                        global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'INPUT (First Focus)');
                     } else {
                         this.mode = 'HIDDEN';
-                        Logger.log('Mode Changed: HIDDEN (Input - No Actions)');
+                        global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (No Actions)');
                     }
                     return;
                 }
@@ -136,6 +160,14 @@
                 // Sort by User Preference (Global Order)
                 // This ensures Smart Actions don't arbitrarily jump to the top if the user wants them elsewhere.
                 combined.sort((a, b) => {
+                    // 0. Semantic Boost (Top Priority)
+                    if (this.ctx.semanticType) {
+                        const aMatch = a.semantic === this.ctx.semanticType;
+                        const bMatch = b.semantic === this.ctx.semanticType;
+                        if (aMatch && !bMatch) return -1;
+                        if (!aMatch && bMatch) return 1;
+                    }
+
                     const idxA = this.settings.order.indexOf(a.id);
                     const idxB = this.settings.order.indexOf(b.id);
                     // Handle missing items (push to end)
@@ -147,7 +179,7 @@
 
                 this.activeActions = combined;
                 
-                Logger.log(`Mode Changed: SMART (Actions: ${this.activeActions.map(a=>a.id).join(', ')})`);
+                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'SMART');
                 return;
             }
 
@@ -155,10 +187,10 @@
             this.activeActions = this._filterActions('selection');
             if (this.activeActions.length > 0) {
                 this.mode = 'SELECTION';
-                Logger.log('Mode Changed: SELECTION');
+                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'SELECTION');
             } else {
                 this.mode = 'HIDDEN';
-                Logger.log('Mode Changed: HIDDEN (Selection - No Actions)');
+                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (No Actions)');
             }
         },
 

@@ -36,7 +36,108 @@
         return { width: width, height: height, dx: dx, dy: dy };
     }
 
+    function getInputCoordinates(element, atStart) {
+        try {
+            const index = atStart ? element.selectionStart : element.selectionEnd;
+            const div = document.createElement('div');
+            const style = window.getComputedStyle(element);
+            
+            const props = ['fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'textIndent', 'whiteSpace', 'padding', 'border', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY', 'textAlign', 'direction'];
+            props.forEach(p => div.style[p] = style[p]);
+            
+            div.style.position = 'fixed';
+            div.style.visibility = 'hidden';
+            
+            const rect = element.getBoundingClientRect();
+            div.style.top = rect.top + 'px';
+            div.style.left = rect.left + 'px';
+            
+            div.textContent = element.value.substring(0, index);
+            const span = document.createElement('span');
+            span.textContent = '\u200b';
+            div.appendChild(span);
+            
+            if (element.tagName === 'TEXTAREA') {
+                div.appendChild(document.createTextNode(element.value.substring(index)));
+            }
+
+            document.body.appendChild(div);
+            div.scrollTop = element.scrollTop;
+            div.scrollLeft = element.scrollLeft;
+            
+            const spanRect = span.getBoundingClientRect();
+            document.body.removeChild(div);
+            
+            return {
+                dx: spanRect.left,
+                dy: spanRect.top,
+                lineHeight: spanRect.height || parseFloat(style.lineHeight) || 20
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function getIndexFromCoordinates(element, x, y) {
+        try {
+            const div = document.createElement('div');
+            const style = window.getComputedStyle(element);
+            
+            const props = ['fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'textIndent', 'whiteSpace', 'padding', 'border', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY', 'textAlign', 'direction'];
+            props.forEach(p => div.style[p] = style[p]);
+            
+            div.style.position = 'fixed';
+            div.style.opacity = '0';
+            div.style.zIndex = '2147483647';
+            div.style.pointerEvents = 'auto';
+            
+            const rect = element.getBoundingClientRect();
+            div.style.top = rect.top + 'px';
+            div.style.left = rect.left + 'px';
+            
+            div.textContent = element.value;
+            if (element.tagName === 'TEXTAREA') {
+                 div.style.whiteSpace = style.whiteSpace;
+            } else {
+                 div.style.whiteSpace = 'pre';
+            }
+
+            document.body.appendChild(div);
+            div.scrollTop = element.scrollTop;
+            div.scrollLeft = element.scrollLeft;
+            
+            let offset = 0;
+            if (document.caretRangeFromPoint) {
+                const range = document.caretRangeFromPoint(x, y);
+                if (range) {
+                    if (range.startContainer.nodeType === 3) {
+                        offset = range.startOffset;
+                    } else if (range.startContainer === div && div.firstChild) {
+                         // Fallback if it hits the container
+                         // If offset is 0, it's start. If 1 (and 1 child), it's end?
+                         // caretRangeFromPoint on element returns child index.
+                         if (range.startOffset === 0) offset = 0;
+                         else offset = div.textContent.length;
+                    }
+                }
+            } else if (document.caretPositionFromPoint) {
+                const pos = document.caretPositionFromPoint(x, y);
+                if (pos) offset = pos.offset;
+            }
+            
+            document.body.removeChild(div);
+            return offset;
+        } catch (e) {
+            return 0;
+        }
+    }
+
     function getSelectionCoordinates(atStart) {
+        if (State.ctx && State.ctx.isInput && State.ctx.element) {
+             const coords = getInputCoordinates(State.ctx.element, atStart);
+             if (coords) return coords;
+        }
+
         const sel = window.getSelection();
         if (!sel.rangeCount) return null;
         
@@ -71,6 +172,17 @@
     }
 
     function createSelectionFromPoint(anchorX, anchorY, focusX, focusY, handleIndex) {
+        if (State.ctx && State.ctx.isInput && State.ctx.element) {
+            const el = State.ctx.element;
+            const i1 = getIndexFromCoordinates(el, anchorX, anchorY);
+            const i2 = getIndexFromCoordinates(el, focusX, focusY);
+            const start = Math.min(i1, i2);
+            const end = Math.max(i1, i2);
+            const dir = i1 > i2 ? 'backward' : 'forward';
+            el.setSelectionRange(start, end, dir);
+            return;
+        }
+
         // Use Selection Module to get precise points from coordinates
         const p1 = SelLib.getPointFromCoords(anchorX, anchorY);
         const p2 = SelLib.getPointFromCoords(focusX, focusY);
@@ -84,17 +196,26 @@
 
     function addDragHandle(dragHandleIndex, selStartDimensions, selEndDimensions) {
         const selection = window.getSelection();
-        if (selection == null || selection == undefined || !selection.rangeCount) return;
+        const isInput = State.ctx && State.ctx.isInput;
+        if (!isInput && (selection == null || selection == undefined || !selection.rangeCount)) return;
 
         const lineWidth = 2.5, circleHeight = 14, verticalOffsetCorrection = -1;
 
         try {
             selectionHandleLineHeight = (dragHandleIndex == 0 ? selStartDimensions.lineHeight : selEndDimensions.lineHeight) + 3;
             if (!selectionHandleLineHeight || isNaN(selectionHandleLineHeight)) {
-                const selectedTextLineHeight = window.getComputedStyle(selection.anchorNode.parentElement, null).getPropertyValue('line-height');
-                if (selectedTextLineHeight !== null && selectedTextLineHeight !== undefined && selectedTextLineHeight.includes('px')) {
-                    const parsed = parseInt(selectedTextLineHeight.replaceAll('px', ''));
-                    selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
+                if (isInput && State.ctx.element) {
+                     const style = window.getComputedStyle(State.ctx.element);
+                     const parsed = parseInt(style.lineHeight);
+                     selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
+                } else if (selection.anchorNode) {
+                    const selectedTextLineHeight = window.getComputedStyle(selection.anchorNode.parentElement, null).getPropertyValue('line-height');
+                    if (selectedTextLineHeight !== null && selectedTextLineHeight !== undefined && selectedTextLineHeight.includes('px')) {
+                        const parsed = parseInt(selectedTextLineHeight.replaceAll('px', ''));
+                        selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
+                    } else {
+                        selectionHandleLineHeight = 21;
+                    }
                 } else {
                     selectionHandleLineHeight = 21;
                 }
@@ -380,6 +501,58 @@
         } catch (e) {}
     }
 
+    function updateDragHandle(dragHandleIndex, selStartDimensions, selEndDimensions) {
+        const root = (window.LighthouseUI && window.LighthouseUI.shadowRoot) ? window.LighthouseUI.shadowRoot : document;
+        const dragHandle = root.getElementById(`lighthouse-draghandle-${dragHandleIndex}`);
+        if (!dragHandle) return;
+
+        const circleHeight = 14, verticalOffsetCorrection = -1;
+        let selectionHandleLineHeight = (dragHandleIndex == 0 ? selStartDimensions.lineHeight : selEndDimensions.lineHeight) + 3;
+        
+        // Recalculate line height if needed (copied from addDragHandle logic)
+        if (!selectionHandleLineHeight || isNaN(selectionHandleLineHeight)) {
+             const isInput = State.ctx && State.ctx.isInput;
+             const selection = window.getSelection();
+             if (isInput && State.ctx.element) {
+                 const style = window.getComputedStyle(State.ctx.element);
+                 const parsed = parseInt(style.lineHeight);
+                 selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
+             } else if (selection.anchorNode) {
+                 const selectedTextLineHeight = window.getComputedStyle(selection.anchorNode.parentElement, null).getPropertyValue('line-height');
+                 if (selectedTextLineHeight !== null && selectedTextLineHeight !== undefined && selectedTextLineHeight.includes('px')) {
+                     const parsed = parseInt(selectedTextLineHeight.replaceAll('px', ''));
+                     selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
+                 } else {
+                     selectionHandleLineHeight = 21;
+                 }
+             } else {
+                 selectionHandleLineHeight = 21;
+             }
+        }
+
+        // Update Position
+        dragHandle.style.transform = `translate(${dragHandleIndex == 0 ? selStartDimensions.dx - 2.5 : selEndDimensions.dx}px, ${(dragHandleIndex == 0 ? selStartDimensions.dy : selEndDimensions.dy) + verticalOffsetCorrection}px)`;
+        
+        // Update Line Height
+        const line = dragHandle.querySelector('.lighthouse-tooltip-draghandle-line');
+        if (line) line.style.height = `${selectionHandleLineHeight}px`;
+
+        // Update Circle Position
+        const circleDiv = dragHandle.querySelector('.lighthouse-tooltip-draghandle-circle');
+        if (circleDiv) {
+             let isTopKnob = false;
+             if (tooltipOnBottom) isTopKnob = !isTopKnob;
+             
+             if (isTopKnob) {
+                 circleDiv.style.top = `-${circleHeight / 2}px`;
+                 circleDiv.style.bottom = 'auto';
+             } else {
+                 circleDiv.style.top = `${selectionHandleLineHeight - circleHeight / 2}px`;
+                 circleDiv.style.bottom = 'auto';
+             }
+        }
+    }
+
     function setDragHandles() {
         if (!getSetting('addDragHandles', true)) return;
 
@@ -395,11 +568,19 @@
         let existingDragHandle0 = root.getElementById('lighthouse-draghandle-0');
         if (existingDragHandle0 == null || existingDragHandle0 == undefined) {
             addDragHandle(0, start, end);
+        } else {
+            updateDragHandle(0, start, end);
         }
 
         let existingDragHandle1 = root.getElementById('lighthouse-draghandle-1');
         if (existingDragHandle1 == null || existingDragHandle1 == undefined) {
             addDragHandle(1, start, end);
+        } else {
+            updateDragHandle(1, start, end);
+        }
+        
+        if (window.LighthouseUtils && window.LighthouseUtils.logEvent) {
+            window.LighthouseUtils.logEvent('HANDLES', 'UPDATE', 'Positions Updated');
         }
     }
 
@@ -432,6 +613,11 @@
     window.LighthouseHandles = {
         setDragHandles,
         hideDragHandles,
-        get isDragging() { return isDraggingDragHandle; }
+        get isDragging() { return isDraggingDragHandle; },
+        get areVisible() { 
+            const root = (window.LighthouseUI && window.LighthouseUI.shadowRoot) ? window.LighthouseUI.shadowRoot : document;
+            const h = root.querySelectorAll('.lighthouse-tooltip-draghandle');
+            return h.length > 0 && h[0].style.opacity !== '0';
+        }
     };
 })();
