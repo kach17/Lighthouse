@@ -17,6 +17,9 @@
     let draggingHandleIndex = null;
     let selectionHandleLineHeight = 21;
     let tooltipOnBottom = false;
+    let initialScrollX = 0;
+    let initialScrollY = 0;
+    let edgeScrollInterval = null;
 
     function getSelectionRectDimensions() {
         let sel, range;
@@ -194,32 +197,41 @@
         }
     }
 
+    function calculateLineHeight(dimensions, isInput, selection) {
+        let lh = dimensions.lineHeight + 3;
+        if (!lh || isNaN(lh)) {
+            if (isInput && State.ctx.element) {
+                const style = window.getComputedStyle(State.ctx.element);
+                const parsed = parseInt(style.lineHeight);
+                lh = isNaN(parsed) ? 21 : parsed + 3;
+            } else if (selection && selection.anchorNode) {
+                const selectedTextLineHeight = window.getComputedStyle(selection.anchorNode.parentElement, null).getPropertyValue('line-height');
+                if (selectedTextLineHeight && selectedTextLineHeight.includes('px')) {
+                    const parsed = parseInt(selectedTextLineHeight.replaceAll('px', ''));
+                    lh = isNaN(parsed) ? 21 : parsed + 3;
+                } else {
+                    lh = 21;
+                }
+            } else {
+                lh = 21;
+            }
+        }
+        return lh;
+    }
+
     function addDragHandle(dragHandleIndex, selStartDimensions, selEndDimensions) {
         const selection = window.getSelection();
         const isInput = State.ctx && State.ctx.isInput;
         if (!isInput && (selection == null || selection == undefined || !selection.rangeCount)) return;
 
-        const lineWidth = 2.5, circleHeight = 14, verticalOffsetCorrection = -1;
+        const lineWidth = 2.25, circleHeight = 10, verticalOffsetCorrection = -1;
 
         try {
-            selectionHandleLineHeight = (dragHandleIndex == 0 ? selStartDimensions.lineHeight : selEndDimensions.lineHeight) + 3;
-            if (!selectionHandleLineHeight || isNaN(selectionHandleLineHeight)) {
-                if (isInput && State.ctx.element) {
-                     const style = window.getComputedStyle(State.ctx.element);
-                     const parsed = parseInt(style.lineHeight);
-                     selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
-                } else if (selection.anchorNode) {
-                    const selectedTextLineHeight = window.getComputedStyle(selection.anchorNode.parentElement, null).getPropertyValue('line-height');
-                    if (selectedTextLineHeight !== null && selectedTextLineHeight !== undefined && selectedTextLineHeight.includes('px')) {
-                        const parsed = parseInt(selectedTextLineHeight.replaceAll('px', ''));
-                        selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
-                    } else {
-                        selectionHandleLineHeight = 21;
-                    }
-                } else {
-                    selectionHandleLineHeight = 21;
-                }
-            }
+            selectionHandleLineHeight = calculateLineHeight(
+                dragHandleIndex == 0 ? selStartDimensions : selEndDimensions,
+                isInput,
+                selection
+            );
         } catch (e) {
             window.LighthouseUtils.Logger.warn('[Handles] Error calculating line height:', e);
             selectionHandleLineHeight = 21;
@@ -276,28 +288,8 @@
                 circleDiv.style.bottom = 'auto';
             }
 
-            const dragHandleStyle = getSetting('dragHandleStyle', 'circle');
-
-            if (dragHandleStyle == 'triangle') {
-                circleDiv.classList.add('draghandle-triangle');
-                if (dragHandleIndex == 0) {
-                    circleDiv.style.clipPath = 'polygon(0% 0%, 100% 100%, 0% 100%)';
-                    circleDiv.style.left = `-${circleHeight}px`;
-                    circleDiv.style.right = 'auto';
-                } else {
-                    circleDiv.style.clipPath = 'polygon(0% 0%, 100% 100%, 100% 0%)';
-                    circleDiv.style.left = `${lineWidth}px`;
-                    circleDiv.style.right = 'auto';
-                }
-            } else {
-                if (dragHandleStyle == 'square') {
-                    circleDiv.classList.add('draghandle-square');
-                } else if (dragHandleStyle == 'rhombus') {
-                    circleDiv.classList.add('draghandle-rhombus');
-                }
-                circleDiv.style.left = `${(lineWidth - circleHeight) / 2}px`;
-                circleDiv.style.right = 'auto';
-            }
+            circleDiv.style.right = `${(circleHeight / 2) - (lineWidth / 2)}px`;
+            circleDiv.style.left = 'auto';
 
             dragHandle.appendChild(circleDiv);
 
@@ -334,59 +326,85 @@
                 document.body.style.cursor = 'grabbing';
                 circleDiv.style.cursor = 'grabbing';
                 dragHandle.style.transition = '';
+                
+                initialScrollX = window.scrollX;
+                initialScrollY = window.scrollY;
 
-                let edgeScrollInterval = null;
+                const textCenterY = activeHandleIndex === 0 ? 
+                    selStartDimensions.dy + ((selStartDimensions.lineHeight || 21) / 2) : 
+                    selEndDimensions.dy + ((selEndDimensions.lineHeight || 21) / 2);
+                const dragOffsetY = e.clientY - textCenterY;
+
+                // Capture Fixed Anchor for robust selection updates (even if off-screen)
+                let fixedAnchor = null;
+                if (State.ctx && State.ctx.isInput && State.ctx.element) {
+                    const el = State.ctx.element;
+                    // For inputs, we capture the index of the OPPOSITE end
+                    fixedAnchor = activeHandleIndex === 0 ? el.selectionEnd : el.selectionStart;
+                } else {
+                    const sel = window.getSelection();
+                    if (sel.rangeCount) {
+                        const range = sel.getRangeAt(0);
+                        // For text, we capture the Node/Offset of the OPPOSITE end
+                        // Handle 0 is Start (Left), so Anchor is End.
+                        // Handle 1 is End (Right), so Anchor is Start.
+                        if (activeHandleIndex === 0) {
+                            fixedAnchor = { node: range.endContainer, offset: range.endOffset };
+                        } else {
+                            fixedAnchor = { node: range.startContainer, offset: range.startOffset };
+                        }
+                    }
+                }
 
                 document.onmousemove = function (e) {
                     try {
                         e.preventDefault();
 
+                        const scrollDeltaX = window.scrollX - initialScrollX;
+                        const scrollDeltaY = window.scrollY - initialScrollY;
+
+                        // Update Anchor Handle (The one NOT being dragged)
+                        const anchorIndex = 1 - activeHandleIndex;
+                        const anchorH = root.getElementById(`lighthouse-draghandle-${anchorIndex}`);
+                        if (anchorH) {
+                            const anchorDims = anchorIndex === 0 ? selStartDimensions : selEndDimensions;
+                            anchorH.style.transform = `translate(${anchorDims.dx - (anchorIndex === 0 ? 2.5 : 0) - scrollDeltaX}px, ${anchorDims.dy + verticalOffsetCorrection - scrollDeltaY}px)`;
+                        }
+
                         const deltaXFromInitial = activeHandleIndex == 0 ? (selStartDimensions.dx - e.clientX) : (selEndDimensions.dx - e.clientX);
                         const deltaYFromInitial = activeHandleIndex == 0 ? (selStartDimensions.dy - e.clientY) : (e.clientY - selEndDimensions.dy);
 
+                        // Update Dragged Handle Visuals
                         if (activeHandleIndex == 0) {
                             dragHandle.style.transform = `translate(${e.clientX}px, ${selStartDimensions.dy - selectionHandleLineHeight - deltaYFromInitial + verticalOffsetCorrection}px)`;
                         } else {
                             dragHandle.style.transform = `translate(${e.clientX}px, ${selEndDimensions.dy - (dragHandleIsReverted ? - (circleHeight / 2) : selectionHandleLineHeight) + deltaYFromInitial + verticalOffsetCorrection}px)`;
                         }
 
-                        if (currentWindowSelection !== null && currentWindowSelection !== undefined && currentWindowSelection !== '') {
-                            try {
-                                if (activeHandleIndex == 0) {
-                                    createSelectionFromPoint(
-                                        selEndDimensions.dx - 2,
-                                        selEndDimensions.dy + (selectionHandleLineHeight / 2),
-                                        selStartDimensions.dx - deltaXFromInitial - 0.05,
-                                        selStartDimensions.dy - deltaYFromInitial - (selectionHandleLineHeight),
-                                        activeHandleIndex
-                                    );
-                                } else {
-                                    createSelectionFromPoint(
-                                        selStartDimensions.dx + 3,
-                                        selStartDimensions.dy,
-                                        selEndDimensions.dx - deltaXFromInitial - 0.05,
-                                        selEndDimensions.dy + deltaYFromInitial - (dragHandleIsReverted ? - (selectionHandleLineHeight / 2) : selectionHandleLineHeight / 2),
-                                        activeHandleIndex
-                                    );
+                        // Update Selection Logic (Robust Method)
+                        if (fixedAnchor !== null) {
+                            const adjustedY = e.clientY - dragOffsetY;
+                            if (State.ctx && State.ctx.isInput && State.ctx.element) {
+                                const el = State.ctx.element;
+                                const newIndex = getIndexFromCoordinates(el, e.clientX, adjustedY);
+                                const start = Math.min(newIndex, fixedAnchor);
+                                const end = Math.max(newIndex, fixedAnchor);
+                                el.setSelectionRange(start, end, newIndex < fixedAnchor ? 'backward' : 'forward');
+                            } else {
+                                const focusPoint = SelLib.getPointFromCoords(e.clientX, adjustedY);
+                                if (focusPoint) {
+                                    SelLib.setSafeRange(fixedAnchor, focusPoint);
                                 }
-                            } catch (e) {}
+                            }
                         }
                     } catch (e) {}
 
-                    let clientY = e.clientY;
-                    let sizeOfDetectingZone = 20, scrollStep = 3;
-
-                    if (clientY > window.innerHeight - sizeOfDetectingZone) {
-                        if (edgeScrollInterval == null)
-                            edgeScrollInterval = setInterval(function () {
-                                window.scrollTo({ top: window.scrollY + scrollStep, behavior: 'smooth' });
-                            }, 1);
-                    } else if (clientY < sizeOfDetectingZone) {
-                        if (edgeScrollInterval == null)
-                            edgeScrollInterval = setInterval(function () {
-                                window.scrollTo({ top: window.scrollY - scrollStep, behavior: 'smooth' });
-                            }, 1);
-                    } else {
+                    const edgeZone = 50;
+                    if (e.clientY > window.innerHeight - edgeZone) {
+                        if (!edgeScrollInterval) edgeScrollInterval = setInterval(() => window.scrollBy(0, 15), 16);
+                    } else if (e.clientY < edgeZone) {
+                        if (!edgeScrollInterval) edgeScrollInterval = setInterval(() => window.scrollBy(0, -15), 16);
+                    } else if (edgeScrollInterval) {
                         clearInterval(edgeScrollInterval);
                         edgeScrollInterval = null;
                     }
@@ -399,13 +417,15 @@
                     document.body.style.cursor = 'unset';
                     circleDiv.style.cursor = 'grab';
 
+                    if (edgeScrollInterval) {
+                        clearInterval(edgeScrollInterval);
+                        edgeScrollInterval = null;
+                    }
+
                     // Restore pointer events on ALL handles
                     const root = (window.LighthouseUI && window.LighthouseUI.shadowRoot) ? window.LighthouseUI.shadowRoot : document;
                     const allHandles = root.querySelectorAll('.lighthouse-tooltip-draghandle');
                     allHandles.forEach(h => h.style.pointerEvents = 'auto');
-
-                    clearInterval(edgeScrollInterval);
-                    edgeScrollInterval = null;
 
                     setTimeout(function () {
                         let windowSelection = window.getSelection();
@@ -506,29 +526,13 @@
         const dragHandle = root.getElementById(`lighthouse-draghandle-${dragHandleIndex}`);
         if (!dragHandle) return;
 
-        const circleHeight = 14, verticalOffsetCorrection = -1;
-        let selectionHandleLineHeight = (dragHandleIndex == 0 ? selStartDimensions.lineHeight : selEndDimensions.lineHeight) + 3;
+        const circleHeight = 10, verticalOffsetCorrection = -1;
         
-        // Recalculate line height if needed (copied from addDragHandle logic)
-        if (!selectionHandleLineHeight || isNaN(selectionHandleLineHeight)) {
-             const isInput = State.ctx && State.ctx.isInput;
-             const selection = window.getSelection();
-             if (isInput && State.ctx.element) {
-                 const style = window.getComputedStyle(State.ctx.element);
-                 const parsed = parseInt(style.lineHeight);
-                 selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
-             } else if (selection.anchorNode) {
-                 const selectedTextLineHeight = window.getComputedStyle(selection.anchorNode.parentElement, null).getPropertyValue('line-height');
-                 if (selectedTextLineHeight !== null && selectedTextLineHeight !== undefined && selectedTextLineHeight.includes('px')) {
-                     const parsed = parseInt(selectedTextLineHeight.replaceAll('px', ''));
-                     selectionHandleLineHeight = isNaN(parsed) ? 21 : parsed + 3;
-                 } else {
-                     selectionHandleLineHeight = 21;
-                 }
-             } else {
-                 selectionHandleLineHeight = 21;
-             }
-        }
+        selectionHandleLineHeight = calculateLineHeight(
+            dragHandleIndex == 0 ? selStartDimensions : selEndDimensions,
+            State.ctx && State.ctx.isInput,
+            window.getSelection()
+        );
 
         // Update Position
         dragHandle.style.transform = `translate(${dragHandleIndex == 0 ? selStartDimensions.dx - 2.5 : selEndDimensions.dx}px, ${(dragHandleIndex == 0 ? selStartDimensions.dy : selEndDimensions.dy) + verticalOffsetCorrection}px)`;
@@ -603,6 +607,7 @@
 
             if (!animated) dragHandle.style.transition = '';
             dragHandle.style.opacity = "0";
+            dragHandle.style.pointerEvents = "none";
 
             setTimeout(function () {
                 dragHandle.remove();

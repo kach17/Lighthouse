@@ -53,8 +53,7 @@
         shadowRoot.appendChild(userStyle);
 
         tooltipContainer = $.create('div', { 
-            attrs: { id: TOOLTIP_ID, role: 'tooltip' },
-            style: 'opacity: 0; pointer-events: none; position: fixed; top: 0; left: 0;' 
+            attrs: { id: TOOLTIP_ID, role: 'tooltip' }
         });
         shadowRoot.appendChild(tooltipContainer);
     }

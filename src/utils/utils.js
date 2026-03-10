@@ -164,11 +164,12 @@
     /**
      * DOM Creator Helper
      */
-    create: (tag, { className = '', text, html, attrs = {}, events = {}, children = [] } = {}) => {
+    create: (tag, { className = '', text, html, attrs = {}, events = {}, children = [], style = '' } = {}) => {
       const el = document.createElement(tag);
       if (className) el.className = className;
       if (text) el.textContent = text;
       if (html) el.innerHTML = html;
+      if (style) el.style.cssText = style;
       
       Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
       Object.entries(events).forEach(([k, v]) => el.addEventListener(k, v));

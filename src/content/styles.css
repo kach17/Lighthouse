@@ -148,18 +148,20 @@
 #lighthouse-extension-tooltip.mode-bottom .lighthouse-label, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-label { bottom: auto; top: -30px; }
 #lighthouse-extension-tooltip .lighthouse-btn:has(.lighthouse-popover) .lighthouse-label { opacity: 0 !important; }
 
-#lighthouse-extension-tooltip .lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: 20px; background: transparent; z-index: 10; pointer-events: auto; }
+#lighthouse-extension-tooltip .lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: 20px; background: transparent; z-index: 10; }
 #lighthouse-extension-tooltip.mode-top .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-bottom .lighthouse-btn.has-popover::after { bottom: 100%; }
 #lighthouse-extension-tooltip.mode-bottom .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-btn.has-popover::after { top: 100%; }
 
 /* Drag handles — line clears selection edge, circle centered on the stick. */
-.lighthouse-tooltip-draghandle { position: fixed; left: 0; top: 0; z-index: 2147483647; pointer-events: auto; }
-.lighthouse-tooltip-draghandle-line { position: absolute; left: 0; width: 2px; background: var(--so-accent); border-radius: 2px; }
-.lighthouse-tooltip-draghandle-circle { position: absolute; width: 14px; height: 14px; background: var(--so-accent); border: 1.5px solid #ffffff; border-radius: 50% !important; z-index: 2147483647; box-shadow: 0 2px 5px rgba(0,0,0,0.25); transition: transform 0.15s ease, opacity 0.2s ease-out; }
-.lighthouse-tooltip-draghandle-circle:hover { transform: scale(1.25); }
+.lighthouse-tooltip-draghandle { position: fixed; left: 0; top: 0; z-index: 99998; pointer-events: auto; opacity: 0; }
+.lighthouse-tooltip-draghandle-line { position: absolute; background: #333; border-radius: 4px; opacity: 0.7; transition: height 200ms ease; }
+.lighthouse-tooltip-draghandle-circle { position: relative; width: 12px; height: 12px; background: #333; border: 0.25px solid #555; border-radius: 50% !important; z-index: 99998; }
+.lighthouse-tooltip-draghandle-circle.draghandle-triangle { border-radius: 4px !important; transform: translate(-50%) rotate(45deg); }
+.lighthouse-tooltip-draghandle-circle.draghandle-square { border-radius: 1.5px !important; }
+.lighthouse-tooltip-draghandle-circle.draghandle-rhombus { border-radius: 1.5px !important; transform: rotate(45deg); }
 /* Text-only popover buttons (e.g. spellcheck suggestions) */
 #lighthouse-extension-tooltip .lighthouse-popover .text-only-btn { width: auto; padding: 4px 10px; border-radius: var(--so-radius); }
-#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn .lighthouse-label { display: block; position: static; opacity: 1; transform: none; background: transparent; box-shadow: none; color: var(--so-text-color); font-size: 13px; padding: 0; pointer-events: auto; transition: none; }
+#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn .lighthouse-label { display: block; position: static; opacity: 1; transform: none; background: transparent; box-shadow: none; color: var(--so-text-color); font-size: 13px; padding: 0; transition: none; }
 #lighthouse-extension-tooltip .lighthouse-popover .text-only-btn svg,
 #lighthouse-extension-tooltip .lighthouse-popover .text-only-btn img { display: none; }
 

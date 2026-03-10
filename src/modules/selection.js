@@ -44,13 +44,21 @@
 
     function getContext() {
         const el = document.activeElement;
-        const isForm = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+        const invalidTypes = ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit', 'password'];
+        const isForm = el && (
+            el.tagName === 'TEXTAREA' || 
+            (el.tagName === 'INPUT' && !invalidTypes.includes((el.type || '').toLowerCase()))
+        );
         const isEditable = el && el.isContentEditable;
         const isInput = isForm || isEditable;
         
         let text = '';
         if (isForm) {
-            text = el.value.substring(el.selectionStart, el.selectionEnd);
+            try {
+                text = el.value.substring(el.selectionStart, el.selectionEnd);
+            } catch (e) {
+                text = '';
+            }
         } else {
             text = window.getSelection().toString();
             
