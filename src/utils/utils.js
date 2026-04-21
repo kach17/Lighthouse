@@ -5,8 +5,6 @@
     }
 
     get isDebug() {
-      // Check if debugMode is enabled in the current configuration
-      // Priority: State (Runtime) > Config (Defaults)
       if (window.LighthouseState && window.LighthouseState.settings) {
           return !!window.LighthouseState.settings.debugMode;
       }
@@ -73,94 +71,9 @@
     }
   }
 
-  const cssPath = function (node, optimized) {
-    if (node.nodeType !== Node.ELEMENT_NODE) return "";
-    var steps = [];
-    var contextNode = node;
-    while (contextNode) {
-        var step = _cssPathStep(contextNode, !!optimized, contextNode === node);
-        if (!step) break;
-        steps.push(step);
-        if (step.optimized) break;
-        contextNode = contextNode.parentNode;
-    }
-    steps.reverse();
-    return steps.join(" > ");
-  };
-
-  const _cssPathStep = function (node, optimized, isTargetNode) {
-    if (node.nodeType !== Node.ELEMENT_NODE) return null;
-    var id = node.getAttribute("id");
-    if (optimized) {
-        if (id) return { value: "#" + escapeIdentifierIfNeeded(id), optimized: true };
-        var nodeNameLower = node.nodeName.toLowerCase();
-        if (nodeNameLower === "body" || nodeNameLower === "head" || nodeNameLower === "html")
-            return { value: node.nodeName.toLowerCase(), optimized: true };
-    }
-    var nodeName = node.nodeName.toLowerCase();
-    if (id) return { value: nodeName.toLowerCase() + "#" + escapeIdentifierIfNeeded(id), optimized: true };
-    var parent = node.parentNode;
-    if (!parent || parent.nodeType === Node.DOCUMENT_NODE)
-        return { value: nodeName.toLowerCase(), optimized: true };
-
-    function prefixedElementClassNames(node) {
-        var classAttribute = node.getAttribute("class");
-        if (!classAttribute) return [];
-        return classAttribute.split(/\s+/g).filter(Boolean).map(function (name) { return "$" + name; });
-    }
-    function escapeIdentifierIfNeeded(ident) {
-        if (/^-?[a-zA-Z_][a-zA-Z0-9_-]*$/.test(ident)) return ident;
-        var shouldEscapeFirst = /^(?:[0-9]|-[0-9-]?)/.test(ident);
-        var lastIndex = ident.length - 1;
-        return ident.replace(/./g, function (c, i) {
-            return ((shouldEscapeFirst && i === 0) || !(/[a-zA-Z0-9_-]/.test(c) || c.charCodeAt(0) >= 0xA0)) ? "\\" + toHexByte(c) + (i === lastIndex ? "" : " ") : c;
-        });
-    }
-    function toHexByte(c) {
-        var hexByte = c.charCodeAt(0).toString(16);
-        if (hexByte.length === 1) hexByte = "0" + hexByte;
-        return hexByte;
-    }
-
-    var prefixedOwnClassNamesArray = prefixedElementClassNames(node);
-    var needsClassNames = false;
-    var needsNthChild = false;
-    var ownIndex = -1;
-    var siblings = parent.children;
-    for (var i = 0; (ownIndex === -1 || !needsNthChild) && i < siblings.length; ++i) {
-        var sibling = siblings[i];
-        if (sibling === node) { ownIndex = i; continue; }
-        if (needsNthChild) continue;
-        if (sibling.nodeName.toLowerCase() !== nodeName.toLowerCase()) continue;
-        needsClassNames = true;
-        var ownClassNames = prefixedOwnClassNamesArray;
-        var ownClassNameCount = 0;
-        for (var name in ownClassNames) ++ownClassNameCount;
-        if (ownClassNameCount === 0) { needsNthChild = true; continue; }
-        var siblingClassNamesArray = prefixedElementClassNames(sibling);
-        for (var j = 0; j < siblingClassNamesArray.length; ++j) {
-            var siblingClass = siblingClassNamesArray[j];
-            if (ownClassNames.indexOf(siblingClass)) continue;
-            delete ownClassNames[siblingClass];
-            if (!--ownClassNameCount) { needsNthChild = true; break; }
-        }
-    }
-    var result = nodeName.toLowerCase();
-    if (isTargetNode && nodeName.toLowerCase() === "input" && node.getAttribute("type") && !node.getAttribute("id") && !node.getAttribute("class"))
-        result += "[type=\"" + node.getAttribute("type") + "\"]";
-    if (needsNthChild) {
-        result += ":nth-child(" + (ownIndex + 1) + ")";
-    } else if (needsClassNames) {
-        for (var prefixedName in prefixedOwnClassNamesArray)
-            result += "." + escapeIdentifierIfNeeded(prefixedOwnClassNamesArray[prefixedName].substr(1));
-    }
-    return { value: result, optimized: false, toString: function() { return this.value; } };
-  };
-
   window.LighthouseUtils = {
     Logger: logger,
     EventManager: new EventManager(),
-    cssPath: cssPath,
     /**
      * DOM Creator Helper
      */
@@ -210,13 +123,29 @@
         if (url) {
             try {
                 const cleanUrl = url.replace('%s', 'test'); 
+                const domain = new URL(cleanUrl).hostname;
                 const img = document.createElement('img');
-                img.src = `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(cleanUrl)}&size=32`;
+                
+                // Try Chrome Extension API first if available, otherwise use Google service
+                if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+                    img.src = `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(cleanUrl)}&size=32`;
+                } else {
+                    img.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+                }
+
                 img.alt = name || icon || 'icon';
                 
                 // Fallback to Initial Letter on error
                 img.onerror = () => { 
-                    const letter = (name ? name.charAt(0) : (new URL(cleanUrl).hostname.charAt(0))).toUpperCase();
+                    // If extension URL failed, try Google service as a secondary attempt
+                    if (img.src.includes('chrome-extension') && !img.dataset.triedGoogle) {
+                        img.dataset.triedGoogle = "true";
+                        img.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+                        return;
+                    }
+
+                    const displayDomain = domain.replace('www.', '');
+                    const letter = (name && name !== 'Open' ? name.charAt(0) : displayDomain.charAt(0)).toUpperCase();
                     const avatar = document.createElement('div');
                     avatar.style.cssText = 'width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; background: #374151; color: #fff; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase;';
                     avatar.textContent = letter;
@@ -251,7 +180,34 @@
         return rtf.format(Math.round(diff / 31536000), 'year');
     },
 
-    // --- Added to support refactored actions.js ---
+    /**
+     * Parse Open Graph tags from HTML string
+     */
+    parseOGTags: (html) => {
+        const tags = {};
+        const metaRegex = /<meta\s+[^>]*(?:property|name)=["']og:([^"']+)["'][^>]*content=["']([^"']+)["'][^>]*>/gi;
+        const metaRegexAlt = /<meta\s+[^+]*content=["']([^"']+)["'][^>]*?(?:property|name)=["']og:([^"']+)["'][^>]*>/gi;
+        
+        let match;
+        while ((match = metaRegex.exec(html)) !== null) {
+            tags[match[1].toLowerCase()] = match[2];
+        }
+        while ((match = metaRegexAlt.exec(html)) !== null) {
+            tags[match[2].toLowerCase()] = match[1];
+        }
+
+        if (!tags.title) {
+            const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+            if (titleMatch) tags.title = titleMatch[1].trim();
+        }
+        if (!tags.description) {
+            const descMatch = html.match(/<meta\s+[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i);
+            if (descMatch) tags.description = descMatch[1].trim();
+        }
+
+        return tags;
+    },
+
     detectTextLanguage: (text) => {
         const cleanText = text.replace(/[^\p{L}]/gu, '').toLowerCase();
         if (/[\u0400-\u04FF]/.test(cleanText)) return 'ru';
@@ -287,9 +243,6 @@
         return src !== tgt;
     },
 
-    /**
-     * Standardized Lifecycle Logger
-     */
     logEvent: (component, event, details = '') => {
         if (!logger.isDebug) return;
 

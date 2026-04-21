@@ -63,21 +63,33 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // --- API Proxy Logic ---
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    switch (request.action) {
-        case 'GET_RATE':
-            handleGetRate(request.base, request.target, sendResponse);
-            return true; 
-        case 'TRANSLATE':
-            handleTranslate(request.text, request.targetLang, sendResponse);
-            return true;
-        case 'DEFINE':
-            handleDefine(request.text, request.targetLang, sendResponse);
-            return true;
-        case 'SPELLCHECK':
-            handleSpellcheck(request.text, sendResponse);
-            return true;
+    const actions = {
+        'GET_RATE': () => handleGetRate(request.base, request.target, sendResponse),
+        'TRANSLATE': () => handleTranslate(request.text, request.targetLang, sendResponse),
+        'DEFINE': () => handleDefine(request.text, request.targetLang, sendResponse),
+        'SPELLCHECK': () => handleSpellcheck(request.text, sendResponse),
+        'FETCH_RAW': () => _fetch(request.url, request.options || {}, sendResponse)
+    };
+
+    if (actions[request.action]) {
+        actions[request.action]();
+        return true;
     }
 });
+
+/**
+ * Common Fetch Helper
+ */
+async function _fetch(url, options = {}, sendResponse, transform = (t) => t) {
+    try {
+        const res = await fetch(url, options);
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        const text = await res.text();
+        sendResponse({ success: true, result: transform(text), status: res.status });
+    } catch (error) {
+        sendResponse({ success: false, error: error.message });
+    }
+}
 
 // --- Currency Rate Handling ---
 const RATES_CACHE_KEY = 'lighthouse_rates_cache';
@@ -90,92 +102,50 @@ async function handleGetRate(base, target, sendResponse) {
     try {
         const data = await getStorageLocal(RATES_CACHE_KEY);
         let cached = data[RATES_CACHE_KEY];
-        let rates;
-        
         const now = Date.now();
-        const isValid = cached && cached.timestamp && (now - cached.timestamp < CACHE_DURATION);
 
-        if (isValid) {
-            rates = cached.rates;
-        } else {
-            const res = await fetch('https://api.coinbase.com/v2/exchange-rates?currency=USD');
-            if (!res.ok) throw new Error(`Coinbase API Error: ${res.status}`);
-            const json = await res.json();
-            if (!json.data || !json.data.rates) throw new Error('Invalid API Response');
-            rates = json.data.rates;
-            await setStorageLocal({
-                [RATES_CACHE_KEY]: { timestamp: now, rates: rates }
-            });
-        }
-
-        const rateToTarget = (target === 'USD') ? 1 : parseFloat(rates[target]);
-        const rateToBase = (base === 'USD') ? 1 : parseFloat(rates[base]);
-
-        if (isNaN(rateToTarget) || isNaN(rateToBase) || rateToBase === 0) {
-            sendResponse({ success: false, error: 'Currency not supported' });
+        if (cached && cached.timestamp && (now - cached.timestamp < CACHE_DURATION)) {
+            const rates = cached.rates;
+            const derivedRate = ((target === 'USD') ? 1 : parseFloat(rates[target])) / ((base === 'USD') ? 1 : parseFloat(rates[base]));
+            sendResponse({ success: true, rate: derivedRate });
             return;
         }
 
-        const derivedRate = rateToTarget / rateToBase;
-        sendResponse({ success: true, rate: derivedRate });
-
+        _fetch('https://api.coinbase.com/v2/exchange-rates?currency=USD', {}, (res) => {
+            if (!res.success) return sendResponse(res);
+            const json = JSON.parse(res.result);
+            const rates = json.data.rates;
+            setStorageLocal({ [RATES_CACHE_KEY]: { timestamp: now, rates } });
+            const derivedRate = ((target === 'USD') ? 1 : parseFloat(rates[target])) / ((base === 'USD') ? 1 : parseFloat(rates[base]));
+            sendResponse({ success: true, rate: derivedRate });
+        });
     } catch (error) {
         sendResponse({ success: false, error: error.message });
     }
 }
 
 async function handleTranslate(text, targetLang = 'en', sendResponse) {
-    try {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('API Error');
-        const data = await res.json();
-        let result = '';
-        if (data && data[0]) {
-            data[0].forEach(part => { if (part[0]) result += part[0]; });
-        }
-        sendResponse({ success: true, result: result || 'Translation failed' });
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
+    _fetch(url, {}, sendResponse, (raw) => {
+        const data = JSON.parse(raw);
+        return data?.[0]?.map(part => part[0]).join('') || 'Translation failed';
+    });
 }
 
 async function handleDefine(text, targetLang = 'en', sendResponse) {
-    try {
-        const lang = targetLang.split('-')[0];
-        const url = `https://${lang}.wikipedia.org/w/api.php?action=query&exsectionformat=plain&prop=extracts&origin=*&exchars=300&exlimit=1&explaintext=0&formatversion=2&format=json&titles=${encodeURIComponent(text.replace(/ /g, '_'))}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('API Error');
-        const data = await res.json();
+    const lang = targetLang.split('-')[0];
+    const getUrl = (l) => `https://${l}.wikipedia.org/w/api.php?action=query&exsectionformat=plain&prop=extracts&origin=*&exchars=300&exlimit=1&explaintext=0&formatversion=2&format=json&titles=${encodeURIComponent(text.replace(/ /g, '_'))}`;
+    
+    _fetch(getUrl(lang), {}, (res) => {
+        const data = res.success ? JSON.parse(res.result) : null;
         const extract = data?.query?.pages?.[0]?.extract;
         if (extract) sendResponse({ success: true, result: extract });
-        else {
-            // Fallback to English Wikipedia
-            if (lang !== 'en') {
-                const enUrl = `https://en.wikipedia.org/w/api.php?action=query&exsectionformat=plain&prop=extracts&origin=*&exchars=300&exlimit=1&explaintext=0&formatversion=2&format=json&titles=${encodeURIComponent(text.replace(/ /g, '_'))}`;
-                const enRes = await fetch(enUrl);
-                const enData = await enRes.json();
-                const enExtract = enData?.query?.pages?.[0]?.extract;
-                if (enExtract) {
-                    sendResponse({ success: true, result: enExtract });
-                    return;
-                }
-            }
-            sendResponse({ success: false, error: 'No definition found' });
-        }
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
+        else if (lang !== 'en') handleDefine(text, 'en', sendResponse); // Fallback
+        else sendResponse({ success: false, error: 'No definition found' });
+    });
 }
 
 async function handleSpellcheck(text, sendResponse) {
-    try {
-        const url = `https://api.datamuse.com/words?sp=${encodeURIComponent(text)}&max=3`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('API Error');
-        const data = await res.json();
-        sendResponse({ success: true, result: data });
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
+    const url = `https://api.datamuse.com/words?sp=${encodeURIComponent(text)}&max=3`;
+    _fetch(url, {}, sendResponse, JSON.parse);
 }

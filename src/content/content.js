@@ -9,105 +9,152 @@
   const $ = window.LighthouseUtils;
   
   let linkHoverTimer = null;
-  let recreateTimer = null;
   let linkDestroyTimer = null;
+  let interactionTimer = null;
 
   function init() {
       State.init();
       if (UI.init) UI.init();
       
-      // Events
-      $.EventManager.add(document, 'mouseup', handleInteraction, true);
-      $.EventManager.add(document, 'keyup', (e) => { if (e.key === 'Shift' || e.key.startsWith('Arrow')) handleInteraction(e); });
-      $.EventManager.add(document, 'keydown', (e) => { if (e.key === 'Escape') UI.destroy(); });
+      if (UI.onDestroy) {
+          UI.onDestroy(() => {
+              clearTimeout(linkHoverTimer);
+              clearTimeout(linkDestroyTimer);
+              clearTimeout(interactionTimer);
+          });
+      }
       
-      // Input Safety
-      $.EventManager.add(document, 'input', (e) => {
-          if ((UI.isActionActive && UI.isActionActive()) || UI.contains(e.target)) return;
+      const forceCleanup = () => {
+          State.mode = 'HIDDEN';
           UI.destroy();
           if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
-      }, true);
-      
-      // Link Hover
-      $.EventManager.add(document, 'mouseover', handleLinkHover);
-      $.EventManager.add(document, 'mouseout', (e) => {
-          if (e.target.closest('a')) {
-              linkDestroyTimer = setTimeout(() => { 
-                  if (!UI.contains(e.relatedTarget) && !window.getSelection().toString()) UI.destroy(); 
-              }, 200);
-          }
-      });
-
-      // Scroll & Resize Lifecycle (Hide immediately, recreate after stop)
-      const hideAndRecreate = () => {
-          if (State.mode === 'HIDDEN') return;
-          UI.destroy();
-          if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles(true, true);
-          
-          if (recreateTimer) clearTimeout(recreateTimer);
-          recreateTimer = setTimeout(() => {
-              if (State.mode !== 'HIDDEN' && State.validate()) {
-                  const newCtx = SelLib.getContext();
-                  if (newCtx.hasText || (newCtx.isInput && newCtx.isEmptyInput)) {
-                      State.update(newCtx);
-                      UI.render(State);
-                      if (window.LighthouseHandles && newCtx.hasText) {
-                          window.LighthouseHandles.setDragHandles();
-                      }
-                  }
-              }
-          }, 650);
       };
-      
-      $.EventManager.add(window, 'scroll', hideAndRecreate, { capture: true, passive: true });
-      $.EventManager.add(window, 'resize', hideAndRecreate, { passive: true });
-      
-      // Drag Start
-      $.EventManager.add(document, 'dragstart', () => {
-          if (State.mode !== 'HIDDEN') {
-              UI.destroy();
-              if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
-          }
-      });
 
-      // Handle Window Blur (e.g. iframe click, tab switch)
-      $.EventManager.add(window, 'blur', () => {
-          UI.destroy(); // Force destroy
-          if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
-      });
-
-      // Selection Change - Handle clearing immediately
-      $.EventManager.add(document, 'selectionchange', () => {
-          if (UI.isActionActive && UI.isActionActive()) return;
-          
-          const sel = window.getSelection();
-          if (sel.isCollapsed) {
-              const el = document.activeElement;
-              // Ignore if inside an input (handled by handleInteraction/input events)
-              if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
-              
-              UI.destroy();
-              if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
+      const globalEventHandler = (e) => {
+          switch (e.type) {
+              case 'mouseup':
+                  handleInteraction(e);
+                  break;
+              case 'keyup':
+                  if (e.key === 'Shift' || e.key.startsWith('Arrow')) handleInteraction(e);
+                  break;
+              case 'keydown':
+                  if (e.key === 'Escape') forceCleanup();
+                  break;
+              case 'input':
+                  if ((UI.isActionActive && UI.isActionActive()) || UI.contains(e.target)) return;
+                  forceCleanup();
+                  break;
+              case 'mouseover':
+                  handleLinkHover(e);
+                  break;
+              case 'mouseout':
+                  if (e.target.closest('a') || UI.contains(e.target)) {
+                      clearTimeout(linkHoverTimer);
+                      linkDestroyTimer = setTimeout(() => { 
+                          if (!UI.contains(e.relatedTarget) && !window.getSelection().toString()) forceCleanup(); 
+                      }, 200);
+                  }
+                  break;
+              case 'scroll':
+              case 'resize':
+                  if (State.mode !== 'HIDDEN' && State.validate()) {
+                      UI.updatePosition(State.ctx);
+                      if (window.LighthouseHandles && State.ctx.hasText) window.LighthouseHandles.setDragHandles();
+                  } else {
+                      forceCleanup();
+                  }
+                  break;
+              case 'dragstart':
+              case 'blur':
+                  if (State.mode !== 'HIDDEN') forceCleanup();
+                  break;
+              case 'selectionchange':
+                  if (UI.isActionActive && UI.isActionActive()) return;
+                  const sel = window.getSelection();
+                  if (sel.isCollapsed) {
+                      const el = document.activeElement;
+                      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+                      forceCleanup();
+                  }
+                  break;
           }
-      });
+      };
+
+      // Document Events
+      $.EventManager.add(document, 'mouseup', globalEventHandler, true);
+      $.EventManager.add(document, 'keyup', globalEventHandler);
+      $.EventManager.add(document, 'keydown', globalEventHandler);
+      $.EventManager.add(document, 'input', globalEventHandler, true);
+      $.EventManager.add(document, 'mouseover', globalEventHandler);
+      $.EventManager.add(document, 'mouseout', globalEventHandler);
+      $.EventManager.add(document, 'dragstart', globalEventHandler);
+      $.EventManager.add(document, 'selectionchange', globalEventHandler);
+
+      // Window Events
+      $.EventManager.add(window, 'scroll', globalEventHandler, { capture: true, passive: true });
+      $.EventManager.add(window, 'resize', globalEventHandler, { passive: true });
+      $.EventManager.add(window, 'blur', globalEventHandler);
       
       // Initialize Markers
       if (window.LighthouseMarkers) {
           window.LighthouseMarkers.init();
       }
       
-      // Text Expander (Lazy Listener)
-      document.addEventListener('focusin', (e) => {
+      // Text Expander (Event Delegation)
+      document.addEventListener('input', (e) => {
           const el = e.target;
           if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
-              el.addEventListener('input', handleTextExpansion);
+              handleTextExpansion(e);
           }
       });
-      
-      document.addEventListener('focusout', (e) => {
-          const el = e.target;
-          if (el) el.removeEventListener('input', handleTextExpansion);
+      // Message Listener
+      chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+          if (request.type === 'LIGHTHOUSE_CONVERT_ALL') {
+              convertAllOnPage();
+          }
       });
+  }
+
+  async function convertAllOnPage() {
+      const Config = window.LighthouseConfig;
+      const MathLib = window.LighthouseMath;
+      const std = (State.settings && State.settings.standards) ? State.settings.standards : Config.defaults.standards;
+      
+      const targetCurrency = std.currency || 'USD';
+      const targetUnitSystem = std.units || 'metric';
+      
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: function(node) {
+              if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA'].includes(node.parentNode.nodeName)) return NodeFilter.FILTER_REJECT;
+              if (node.parentNode.classList && (node.parentNode.classList.contains('lighthouse-converted') || node.parentNode.classList.contains('lighthouse-converted-price'))) return NodeFilter.FILTER_REJECT;
+              if (node.parentNode.isContentEditable) return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+          }
+      }, false);
+      
+      const textNodes = [];
+      let node;
+      while (node = walker.nextNode()) {
+          if (node.nodeValue.trim() !== '') {
+              textNodes.push(node);
+          }
+      }
+      
+      for (const textNode of textNodes) {
+          let originalText = textNode.nodeValue;
+          let newText = originalText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          
+          const result = await MathLib.convertAllText(newText, targetCurrency, targetUnitSystem, MathLib.fetchRate);
+          
+          if (result.modified) {
+              // Wrap converted text in a span so we don't convert it again
+              const span = document.createElement('span');
+              span.classList.add('lighthouse-converted');
+              span.innerHTML = result.text;
+              textNode.parentNode.replaceChild(span, textNode);
+          }
+      }
   }
 
   function handleTextExpansion(e) {
@@ -168,13 +215,23 @@
       // Triple click delay
       const delay = e && e.detail === 3 ? 200 : 0;
       
-      setTimeout(() => {
+      clearTimeout(interactionTimer);
+      interactionTimer = setTimeout(() => {
           const ctx = SelLib.getContext();
           
+          // Capture Mouse Coordinates for Pointer-Relative Positioning
+          if (e && e.type === 'mouseup') {
+              ctx.mouseX = e.clientX;
+              ctx.mouseY = e.clientY;
+          }
+
           // Standardize Position Capture for Scrolling Inputs
           if (e && e.type === 'mouseup' && ctx.isForm && ctx.element) {
               const rect = ctx.element.getBoundingClientRect();
               ctx.relativePos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          } else if (e && e.type === 'keyup' && ctx.isForm && State.ctx && State.ctx.element === ctx.element) {
+              // Preserve relative position on keyboard events if in same element
+              ctx.relativePos = State.ctx.relativePos;
           }
 
           if (State.settings.smartSnapping && e && e.type === 'mouseup' && ctx.hasText) {
@@ -214,8 +271,11 @@
       clearTimeout(linkHoverTimer);
       linkHoverTimer = setTimeout(() => {
           if (!window.getSelection().toString()) {
-              State.update(SelLib.getLinkContext(link));
-              if (State.mode === 'LINK') UI.render(State);
+              const linkCtx = SelLib.getLinkContext(link);
+              if (linkCtx) {
+                  State.update(linkCtx);
+                  if (State.mode === 'LINK') UI.render(State);
+              }
           }
       }, 400);
   }

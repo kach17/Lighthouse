@@ -25,8 +25,8 @@
         let sel, range;
         let width = 0, height = 0;
         let dx = 0, dy = 0;
-        sel = window.getSelection();
-        if (sel.rangeCount) {
+        sel = window.LighthouseSelection.getActiveSelection();
+        if (sel && sel.rangeCount) {
             range = sel.getRangeAt(0).cloneRange();
             if (range.getBoundingClientRect) {
                 const rect = range.getBoundingClientRect();
@@ -141,8 +141,8 @@
              if (coords) return coords;
         }
 
-        const sel = window.getSelection();
-        if (!sel.rangeCount) return null;
+        const sel = window.LighthouseSelection.getActiveSelection();
+        if (!sel || !sel.rangeCount) return null;
         
         // Use Selection Module to get precise coordinates
         const range = sel.getRangeAt(0).cloneRange();
@@ -220,11 +220,11 @@
     }
 
     function addDragHandle(dragHandleIndex, selStartDimensions, selEndDimensions) {
-        const selection = window.getSelection();
+        const selection = window.LighthouseSelection.getActiveSelection();
         const isInput = State.ctx && State.ctx.isInput;
-        if (!isInput && (selection == null || selection == undefined || !selection.rangeCount)) return;
+        if (!isInput && (!selection || !selection.rangeCount)) return;
 
-        const lineWidth = 2.25, circleHeight = 10, verticalOffsetCorrection = -1;
+        const lineWidth = 2.25, circleHeight = 14, verticalOffsetCorrection = -1;
 
         try {
             selectionHandleLineHeight = calculateLineHeight(
@@ -313,8 +313,8 @@
                 const allHandles = root.querySelectorAll('.lighthouse-tooltip-draghandle');
                 allHandles.forEach(h => h.style.pointerEvents = 'none');
 
-                if (window.getSelection) {
-                    currentWindowSelection = window.getSelection().toString();
+                if (window.LighthouseSelection.getActiveSelection) {
+                    currentWindowSelection = window.LighthouseSelection.getActiveSelection().toString();
                 } else if (document.selection) {
                     currentWindowSelection = document.selection.createRange().toString();
                 }
@@ -342,8 +342,8 @@
                     // For inputs, we capture the index of the OPPOSITE end
                     fixedAnchor = activeHandleIndex === 0 ? el.selectionEnd : el.selectionStart;
                 } else {
-                    const sel = window.getSelection();
-                    if (sel.rangeCount) {
+                    const sel = window.LighthouseSelection.getActiveSelection();
+                    if (sel && sel.rangeCount) {
                         const range = sel.getRangeAt(0);
                         // For text, we capture the Node/Offset of the OPPOSITE end
                         // Handle 0 is Start (Left), so Anchor is End.
@@ -428,10 +428,10 @@
                     allHandles.forEach(h => h.style.pointerEvents = 'auto');
 
                     setTimeout(function () {
-                        let windowSelection = window.getSelection();
+                        let windowSelection = window.LighthouseSelection.getActiveSelection();
 
-                        if (windowSelection.toString() == currentWindowSelection.toString()) {
-                            SelLib.extendSelectionByWord(windowSelection, activeHandleIndex);
+                        if (windowSelection && windowSelection.toString() == currentWindowSelection.toString()) {
+                            window.LighthouseSelection.extendSelectionByWord(windowSelection, activeHandleIndex);
                         }
 
                         setTimeout(function () {
@@ -526,12 +526,12 @@
         const dragHandle = root.getElementById(`lighthouse-draghandle-${dragHandleIndex}`);
         if (!dragHandle) return;
 
-        const circleHeight = 10, verticalOffsetCorrection = -1;
+        const circleHeight = 14, verticalOffsetCorrection = -1;
         
         selectionHandleLineHeight = calculateLineHeight(
             dragHandleIndex == 0 ? selStartDimensions : selEndDimensions,
             State.ctx && State.ctx.isInput,
-            window.getSelection()
+            window.LighthouseSelection.getActiveSelection()
         );
 
         // Update Position
@@ -589,6 +589,13 @@
     }
 
     function hideDragHandles(animated = true, shouldIgnoreDragged = false) {
+        if (!shouldIgnoreDragged) {
+            document.onmousemove = null;
+            document.onmouseup = null;
+            isDraggingDragHandle = false;
+            draggingHandleIndex = null;
+        }
+        
         const root = (window.LighthouseUI && window.LighthouseUI.shadowRoot) ? window.LighthouseUI.shadowRoot : document;
         
         // Re-query every time to ensure we get the latest elements

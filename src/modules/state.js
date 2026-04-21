@@ -21,6 +21,21 @@
         // The list of actions to show for the current mode
         activeActions: [],
 
+        _orderedActionsCache: null,
+        _lastOrderStr: null,
+
+        _getOrderedActions: function() {
+            if (!this.settings || !this.settings.order) return [];
+            const currentOrderStr = this.settings.order.join(',');
+            if (this._lastOrderStr !== currentOrderStr) {
+                this._orderedActionsCache = this.settings.order
+                    .map(id => Actions.find(a => a.id === id))
+                    .filter(a => a);
+                this._lastOrderStr = currentOrderStr;
+            }
+            return this._orderedActionsCache;
+        },
+
         init: function() {
             if (typeof chrome !== 'undefined' && chrome.storage) {
                 chrome.storage.sync.get(Defaults, (items) => {
@@ -65,9 +80,10 @@
             }
 
             // 2. Link Mode (Hover logic handles this separately usually, but good to have)
+            const apiCtx = global.LighthouseAPI.prepareContext(rawCtx);
             if (rawCtx.isLink) {
                 this.mode = 'LINK';
-                this.activeActions = this._filterActions('link');
+                this.activeActions = this._filterActions('link', apiCtx);
                 global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'LINK');
                 return;
             }
@@ -85,8 +101,8 @@
                 // Case A: Text is selected INSIDE the input. 
                 // Always show tooltip (Copy/Cut/etc).
                 if (rawCtx.hasText) {
-                    const inputActions = this._filterActions('input');
-                    const smartActions = this._filterActions('smart');
+                    const inputActions = this._filterActions('input', apiCtx);
+                    const smartActions = this._filterActions('smart', apiCtx);
                     // REMOVED: const selectionActions = this._filterActions('selection');
                     // Selection actions (like Search, Translate) often don't work well with Input text 
                     // or are redundant with Input actions.
@@ -130,7 +146,7 @@
                 } else {
                     // User clicked a NEW input (or first time).
                     // SHOW IT (Paste/Clear).
-                    this.activeActions = this._filterActions('input');
+                    this.activeActions = this._filterActions('input', apiCtx);
                     if (this.activeActions.length > 0) {
                         this.mode = 'INPUT';
                         this.lastFocusedInput = rawCtx.element; // Mark as seen
@@ -145,11 +161,11 @@
 
             // 5. Smart Mode (Text Selected in DOM)
             // Check for Smart Actions (Math, Currency, QR)
-            const smartActions = this._filterActions('smart');
+            const smartActions = this._filterActions('smart', apiCtx);
             if (smartActions.length > 0) {
                 this.mode = 'SMART';
                 // Merge Smart Actions with Standard Selection Actions
-                const selectionActions = this._filterActions('selection');
+                const selectionActions = this._filterActions('selection', apiCtx);
                 
                 // Combine
                 let combined = [...smartActions, ...selectionActions];
@@ -184,7 +200,7 @@
             }
 
             // 6. Standard Selection Mode (Text Selected in DOM)
-            this.activeActions = this._filterActions('selection');
+            this.activeActions = this._filterActions('selection', apiCtx);
             if (this.activeActions.length > 0) {
                 this.mode = 'SELECTION';
                 global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'SELECTION');
@@ -239,16 +255,13 @@
         /**
          * Helper to get enabled actions by category
          */
-        _filterActions: function(category) {
-            const apiCtx = global.LighthouseAPI.prepareContext(this.ctx);
-            return this.settings.order
-                .map(id => Actions.find(a => a.id === id))
-                .filter(a => {
-                    if (!a) return false;
-                    if (this.settings.enabled[a.id] === false) return false;
-                    if (a.category !== category) return false;
-                    return a.condition(apiCtx);
-                });
+        _filterActions: function(category, apiCtx) {
+            apiCtx = apiCtx || global.LighthouseAPI.prepareContext(this.ctx);
+            return this._getOrderedActions().filter(a => {
+                if (this.settings.enabled[a.id] === false) return false;
+                if (a.category !== category) return false;
+                return a.condition(apiCtx);
+            });
         }
     };
 

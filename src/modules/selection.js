@@ -42,6 +42,23 @@
         return text;
     }
 
+    function getActiveSelection() {
+        let sel = window.getSelection();
+        
+        // Shadow DOM Support (e.g. Gemini, modern editors)
+        // If selection is empty or points to a shadow host, check the active element's shadowRoot
+        if (!sel || sel.rangeCount === 0 || sel.toString().length === 0) {
+            const active = document.activeElement;
+            if (active && active.shadowRoot && active.shadowRoot.getSelection) {
+                const shadowSel = active.shadowRoot.getSelection();
+                if (shadowSel && shadowSel.rangeCount > 0) {
+                    return shadowSel;
+                }
+            }
+        }
+        return sel;
+    }
+
     function getContext() {
         const el = document.activeElement;
         const invalidTypes = ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit', 'password'];
@@ -60,7 +77,8 @@
                 text = '';
             }
         } else {
-            text = window.getSelection().toString();
+            const sel = getActiveSelection();
+            text = sel ? sel.toString() : '';
             
             // Firefox fallback for textarea if selection is empty but we are in a textarea
             if (text === '' && navigator.userAgent.indexOf("Firefox") > -1 && el && el.tagName === 'TEXTAREA') {
@@ -81,7 +99,8 @@
         }
         
         // Semantic Analysis
-        const semanticNode = isInput ? el : (window.getSelection().anchorNode ? (window.getSelection().anchorNode.nodeType === 3 ? window.getSelection().anchorNode.parentElement : window.getSelection().anchorNode) : null);
+        const sel = window.getSelection();
+        const semanticNode = isInput ? el : (sel.anchorNode ? (sel.anchorNode.nodeType === 3 ? sel.anchorNode.parentElement : sel.anchorNode) : null);
         const semantic = getSemanticInfo(semanticNode, text);
 
         return { 
@@ -154,10 +173,13 @@
             node = ctx.element;
         } else if (ctx.isLink) {
             node = ctx.element;
-        } else if (window.getSelection().anchorNode) {
-            node = window.getSelection().anchorNode;
-            // If text node, move up to element
-            if (node.nodeType === 3) node = node.parentElement;
+        } else {
+            const sel = window.getSelection();
+            if (sel.anchorNode) {
+                node = sel.anchorNode;
+                // If text node, move up to element
+                if (node.nodeType === 3) node = node.parentElement;
+            }
         }
 
         while (node && node.nodeType === 1) {
@@ -476,6 +498,7 @@
 
     window.LighthouseSelection = {
         getContext,
+        getActiveSelection,
         getLinkContext,
         getLanguage,
         insertText,

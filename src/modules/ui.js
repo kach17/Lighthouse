@@ -17,7 +17,9 @@
     // Volatile State
     let actionActive = false;
     let hoverTimeout = null;
+    let moreTimeout = null;
     let lastState = null;
+    const destroyCallbacks = [];
     
     // Cache for preview popovers to prevent duplicate network requests
     const previewCache = new Map();
@@ -112,7 +114,6 @@
                     });
                     moreBtn.appendChild(moreMenu);
                     
-                    let moreTimeout;
                     const showMore = () => {
                         clearTimeout(moreTimeout);
                         moreMenu.classList.add('visible');
@@ -183,29 +184,50 @@
         const linkBtn = createButton({
             id: 'link-open',
             label: 'Open',
-            icon: 'globe', // Fallback
+            icon: null, // Set to null to trigger Favicon Fetcher
             iconUrl: ctx.url, // Triggers Favicon
             preview: async () => {
-                // Prepare Safety Icon (Colored)
+                // 1. Safety Info
                 let iconKey = 'lock';
-                let color = '#86efac'; // Success Green
-                if (safety.status === 'DANGER') { iconKey = 'lock'; color = '#fca5a5'; } // Red
-                else if (safety.status === 'SUSPICIOUS') { iconKey = 'warning'; color = '#fde047'; } // Yellow
+                let color = '#86efac'; 
+                if (safety.status === 'DANGER') { iconKey = 'lock'; color = '#fca5a5'; } 
+                else if (safety.status === 'SUSPICIOUS') { iconKey = 'warning'; color = '#fde047'; } 
                 
-                // Get raw SVG and color it
                 let svg = window.LighthouseIcons ? window.LighthouseIcons[iconKey] : null;
                 if (svg) svg = svg.replace('<svg ', `<svg style="color: ${color};" `);
 
+                // 2. OG Sneak Peek
+                let ogHtml = null;
+                try {
+                    const html = await tools.fetchRaw(ctx.url);
+                    if (html) {
+                        const tags = window.LighthouseUtils.parseOGTags(html);
+                        if (tags.title || tags.image) {
+                            ogHtml = `<div style="max-width: 260px; text-align: left; white-space: normal; line-height: 1.4; padding: 4px;">`;
+                            if (tags.image) {
+                                ogHtml += `<img src="${tags.image}" style="width: 100%; max-height: 140px; object-fit: cover; border-radius: 6px; margin-bottom: 8px;" referrerpolicy="no-referrer">`;
+                            }
+                            if (tags.title) {
+                                ogHtml += `<strong style="font-size: 14px; color: var(--so-text-color);">${tags.title}</strong>`;
+                            }
+                            if (tags.description) {
+                                ogHtml += `<div style="font-size: 12px; color: var(--so-text-color); margin-top: 4px;">${tags.description}</div>`;
+                            }
+                            ogHtml += `</div>`;
+                        }
+                    }
+                } catch (e) { /* Fail silently */ }
+
                 return {
-                    // 2) The Link (Textual Button)
-                    previewText: ctx.url,
+                    type: ogHtml ? 'html' : 'text',
+                    content: ogHtml || null,
+                    previewText: ogHtml ? null : ctx.url,
                     previewClick: () => window.open(ctx.url, '_blank'),
                     
-                    // 1) The Safety Badge (Button)
                     prependItems: true,
                     items: [{
                         label: `Safety: ${safety.status}`,
-                        icon: svg || iconKey, // Pass colored SVG or key
+                        icon: svg || iconKey,
                         onClick: () => { /* Info? */ }
                     }]
                 };
@@ -223,7 +245,7 @@
             label: 'Copy',
             icon: 'copy',
             execute: () => {
-                navigator.clipboard.writeText(ctx.url);
+                navigator.clipboard.writeText(ctx.url).catch(e => console.warn('Lighthouse UI: Clipboard write blocked', e));
                 return { success: true, message: 'Link Copied' };
             }
         }, ctx, tools);
@@ -234,15 +256,44 @@
     }
 
     function createButton(def, ctx, tools) {
+        let labelText = def.label;
+        
         // Base Button
         const btn = $.create('button', {
             className: 'lighthouse-btn',
             attrs: { 'data-action': def.id },
             children: [ 
                 $.createSmartIcon(def.icon, def.iconUrl, def.label),
-                $.create('span', { className: 'lighthouse-label', text: def.label })
+                $.create('span', { className: 'lighthouse-label', text: labelText })
             ]
         });
+
+        // Result as Label Pattern
+        if (def.id === 'math') {
+            const res = window.LighthouseMath.safeCalculate(ctx.text);
+            if (res !== null) {
+                btn.querySelector('.lighthouse-label').textContent = `∑ ${Number(res.toFixed(4))}`;
+            }
+        } else if (def.id === 'currency') {
+            const txt = ctx.text.trim().toUpperCase();
+            const amount = window.LighthouseMath.parseLocaleNumber(txt);
+            let base = 'USD';
+            for (const [key, val] of Object.entries(window.LighthouseData.CURRENCY_MAP)) {
+                if (txt.includes(key)) { base = val; break; }
+            }
+            const settings = (window.LighthouseState && window.LighthouseState.settings) ? window.LighthouseState.settings : (window.LighthouseConfig ? window.LighthouseConfig.defaults : {});
+            const target = (settings.standards && settings.standards.currency) || 'USD';
+            if (base !== target && amount !== null) {
+                window.LighthouseMath.fetchRate(base, target).then(rate => {
+                    if (rate) {
+                        const converted = (amount * rate).toFixed(2);
+                        const sym = window.LighthouseData.CURRENCY_SYMBOLS?.[target] || '';
+                        const labelEl = btn.querySelector('.lighthouse-label');
+                        if (labelEl) labelEl.textContent = `${sym}${converted} ${target}`;
+                    }
+                });
+            }
+        }
 
         // Handle Paste Special Case (Async Content) inside the standard flow
         if (def.id === 'paste') {
@@ -295,6 +346,7 @@
                         if (data) cacheSet(cacheKey, data);
                     }
                     
+                    if (!btn.matches(':hover')) return;
                     if (!data) return;
 
                     const popover = $.create('div', { className: POPOVER_CLASS });
@@ -377,27 +429,28 @@
             const sel = window.getSelection();
             if (!sel.rangeCount) return destroy();
             rect = sel.getRangeAt(0).getBoundingClientRect();
-            
-            // Fallback for empty rects (e.g. backward selections in some browsers)
-            if (rect.width === 0 && rect.height === 0 && window.LighthouseState && window.LighthouseState.lastEvent) {
-                const e = window.LighthouseState.lastEvent;
-                rect = { left: e.clientX, top: e.clientY - 10, right: e.clientX, bottom: e.clientY - 10, width: 0, height: 0 };
-            }
         }
 
-        if (!rect || (rect.width === 0 && rect.height === 0 && !ctx.isForm)) return destroy();
+        if (!rect || typeof rect.top !== 'number') return destroy();
+        
+        // 2. Hybrid Positioning (Inbox Style)
+        // Horizontal: Follow the pointer if available, otherwise center on selection.
+        // Vertical: Always stay outside the selection bounds to prevent overlap.
+        let anchorLeft = rect.left + (rect.width / 2);
+        if (ctx.mouseX !== undefined) {
+            anchorLeft = ctx.mouseX;
+        }
 
-        // 2. Calculate Strict Positions (CALCULATE PHASE)
-        const TOOLTIP_H = tooltipContainer.offsetHeight || 46;
-        const TOOLTIP_W = tooltipContainer.offsetWidth || 200;
+        // 3. Calculate Strict Positions (CALCULATE PHASE)
+        const TOOLTIP_H = tooltipContainer.offsetHeight || 48; // Slightly larger fallback
+        const TOOLTIP_W = tooltipContainer.offsetWidth || 220;
         const VIEW_W = window.innerWidth;
         const VIEW_H = window.innerHeight;
         const MARGIN = 10;
-        const GAP = 12;
+        const GAP = 18; // Increased gap to ensure "not over selection"
 
         // Horizontal: Clamp within viewport
-        let left = rect.left + (rect.width / 2);
-        left = Math.max((TOOLTIP_W / 2) + MARGIN, Math.min(left, VIEW_W - (TOOLTIP_W / 2) - MARGIN));
+        let left = Math.max((TOOLTIP_W / 2) + MARGIN, Math.min(anchorLeft, VIEW_W - (TOOLTIP_W / 2) - MARGIN));
         
         const idealTop = rect.top - TOOLTIP_H - GAP;
         const idealBottom = rect.bottom + GAP;
@@ -405,29 +458,27 @@
         let top, mode;
 
         // Priority 1: Ideal Top (Standard)
-        if (idealTop >= MARGIN && idealTop + TOOLTIP_H <= VIEW_H) {
+        if (idealTop >= MARGIN && idealTop <= VIEW_H - TOOLTIP_H - MARGIN) {
              top = idealTop;
              mode = 'top';
         }
-        // Priority 2: Ideal Bottom (Flip) - ONLY if visibly on screen
-        else if (idealBottom >= MARGIN && idealBottom + TOOLTIP_H <= VIEW_H - MARGIN) {
+        // Priority 2: Ideal Bottom (Flip)
+        else if (idealBottom >= MARGIN && idealBottom <= VIEW_H - TOOLTIP_H - MARGIN) {
              top = idealBottom;
              mode = 'bottom';
         }
-        // Priority 3: Sticky (Peek) - Fallback for off-screen
+        // Priority 3: Sticky Fallback
         else {
-             if (rect.top < MARGIN) {
-                 // Scrolled Up / Past Top -> Stick to Top
-                 top = MARGIN;
-                 mode = 'sticky-top';
-             } else {
-                 // Scrolled Down / Past Bottom -> Stick to Bottom
+             if (rect.top > VIEW_H - MARGIN) {
                  top = VIEW_H - TOOLTIP_H - MARGIN;
                  mode = 'sticky-bottom';
+             } else {
+                 top = MARGIN;
+                 mode = 'sticky-top';
              }
         }
 
-        // 3. Apply Styles (WRITE PHASE - Batched via rAF)
+        // 4. Apply Styles (WRITE PHASE - Batched via rAF)
         requestAnimationFrame(() => {
             tooltipContainer.style.top = `${top}px`;
             tooltipContainer.style.left = `${left}px`;
@@ -446,6 +497,12 @@
     }
 
     function destroy() {
+        clearTimeout(hoverTimeout);
+        clearTimeout(moreTimeout);
+        removePopover(false);
+        
+        destroyCallbacks.forEach(cb => cb());
+        
         if (tooltipContainer && tooltipContainer.classList.contains('visible')) {
             $.logEvent('UI', 'DESTROY', 'Tooltip Hidden');
             tooltipContainer.classList.remove('visible');
@@ -465,6 +522,7 @@
         render, 
         updatePosition, 
         destroy, 
+        onDestroy: (cb) => destroyCallbacks.push(cb),
         contains: (t) => document.getElementById(HOST_ID)?.contains(t), 
         showToast, 
         isActionActive: () => actionActive,

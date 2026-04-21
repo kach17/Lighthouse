@@ -47,11 +47,17 @@
             
             // Clipboard
             copy: (text) => {
-                navigator.clipboard.writeText(String(text));
+                const target = String(text);
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(target).catch(e => console.warn('Lighthouse: Clipboard blocked', e));
+                } else {
+                    console.warn('Lighthouse: Clipboard API not available');
+                }
             },
             readClipboard: async () => {
                 try {
-                    return await navigator.clipboard.readText();
+                    if (navigator.clipboard) return await navigator.clipboard.readText();
+                    return '';
                 } catch(e) { return ''; }
             },
             
@@ -99,6 +105,13 @@
                 return new Promise(resolve => {
                     chrome.runtime.sendMessage({ action: 'SPELLCHECK', text }, (res) => {
                         resolve((res && res.success) ? res.result : []);
+                    });
+                });
+            },
+            fetchRaw: (url, options = {}) => {
+                return new Promise(resolve => {
+                    chrome.runtime.sendMessage({ action: 'FETCH_RAW', url, options }, (res) => {
+                        resolve((res && res.success) ? res.result : null);
                     });
                 });
             },

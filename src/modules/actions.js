@@ -286,75 +286,49 @@
             condition: (ctx) => ctx.isInput,
             execute: async (ctx, tools) => {
                 ctx.element.focus();
-                
-                // Smart Paste Logic
                 let text = await tools.readClipboard();
                 if (!text) return { success: false, message: 'Clipboard empty' };
-                
-                // 3. PDF Fixer: Remove broken newlines from hard-wrapped text
-                if (text.includes('\n')) {
-                    const lines = text.split('\n');
-                    // Heuristic: If >50% of lines do NOT end in punctuation, it's likely a hard wrap
-                    const wrappedCount = lines.filter(l => l.length > 0 && !/[.!?:;]$/.test(l.trim())).length;
-                    if (lines.length > 1 && wrappedCount / lines.length > 0.5) {
-                        text = text.replace(/-\n/g, '').replace(/\n/g, ' ');
-                    }
-                }
+                text = text.trim();
 
-                // 1. Contextual Spacing (English Teacher)
-                let charBefore = null;
-                let charAfter = null;
-
+                let charBefore = null, charAfter = null, textBefore = '';
                 if (ctx.isForm) {
-                    const val = ctx.element.value || '';
-                    const s = ctx.element.selectionStart;
-                    const e = ctx.element.selectionEnd;
+                    const val = ctx.element.value || '', s = ctx.element.selectionStart, e = ctx.element.selectionEnd;
+                    textBefore = val.substring(0, s);
                     charBefore = s > 0 ? val[s - 1] : null;
                     charAfter = e < val.length ? val[e] : null;
                 } else if (ctx.isEditable) {
                     const sel = window.getSelection();
                     if (sel.rangeCount) {
-                        const range = sel.getRangeAt(0);
-                        
-                        // Char Before
-                        const preRange = range.cloneRange();
-                        preRange.collapse(true);
-                        if (preRange.startOffset > 0) {
-                             preRange.setStart(preRange.startContainer, preRange.startOffset - 1);
-                             charBefore = preRange.toString();
-                        }
-
-                        // Char After
-                        const postRange = range.cloneRange();
-                        postRange.collapse(false);
+                        const range = sel.getRangeAt(0), pre = range.cloneRange();
+                        pre.collapse(true);
                         try {
-                            if (postRange.endContainer.nodeType === 3 && postRange.endOffset < postRange.endContainer.length) {
-                                postRange.setEnd(postRange.endContainer, postRange.endOffset + 1);
-                                charAfter = postRange.toString();
+                            pre.setStart(pre.startContainer, Math.max(0, pre.startOffset - 10));
+                            textBefore = pre.toString();
+                            charBefore = textBefore.slice(-1) || null;
+                        } catch(e) {}
+                        const post = range.cloneRange();
+                        post.collapse(false);
+                        try {
+                            if (post.endContainer.nodeType === 3 && post.endOffset < post.endContainer.length) {
+                                post.setEnd(post.endContainer, post.endOffset + 1);
+                                charAfter = post.toString();
                             }
                         } catch(e) {}
                     }
                 }
 
-                // Rule A: Add space if missing
-                // If char before is a word char or punctuation, and pasted text starts with word char -> add space
-                if (charBefore && (/[\w.!?,;:]/.test(charBefore)) && /^\w/.test(text)) {
-                    text = ' ' + text;
-                }
-                // If char after is a word char, and pasted text ends with word char -> add space
-                if (charAfter && /\w/.test(charAfter) && /\w$/.test(text)) {
-                    text = text + ' ';
+                const style = window.getComputedStyle(ctx.element);
+                const isProse = !(/mono/i.test(style.fontFamily) || ctx.element.spellcheck === false || /url|email|password/.test(ctx.element.type)) && !(/[{}[\]$=>_]/.test(text) || (text.length > 5 && !text.includes(' ')));
+
+                if (isProse) {
+                    if (charBefore && /[.,!?;:]/.test(charBefore) && text.startsWith(charBefore)) text = text.slice(1).trimStart();
+                    if (/[.!?]\s*$/.test(textBefore) && text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1);
+                    if (!(charBefore && charAfter && /\w/.test(charBefore) && /\w/.test(charAfter))) {
+                        if (charBefore && !/\s/.test(charBefore) && !/^[.,!?;:]/.test(text)) text = ' ' + text;
+                        if (charAfter && !/\s/.test(charAfter) && !/[.,!?;:]$/.test(text)) text = text + ' ';
+                    }
                 }
 
-                // Rule B: Remove double space (New Rule)
-                if (charBefore === ' ' && text.startsWith(' ')) {
-                    text = text.trimStart();
-                }
-                if (charAfter === ' ' && text.endsWith(' ')) {
-                    text = text.trimEnd();
-                }
-
-                // 5. Formatting Nuke: Insert as plain text
                 tools.replace(text);
                 return { success: true };
             },
@@ -492,11 +466,12 @@
             category: 'smart',
             icon: 'currency',
             condition: (ctx) => {
-                const raw = ctx.text.trim();
+                const raw = ctx.text.trim().toUpperCase();
                 if (!/\d/.test(raw) || raw.length > 50) return false;
                 const keys = Object.keys(Data.CURRENCY_MAP || {}).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-                // Match: Number + Currency OR Currency + Number
-                return new RegExp(`([\\d\\s]+(${keys})|(${keys})[\\d\\s]+)`, 'i').test(raw);
+                if (!new RegExp(`([\\d\\s]+(${keys})|(${keys})[\\d\\s]+)`, 'i').test(raw)) return false;
+                const base = Object.entries(Data.CURRENCY_MAP).find(([k]) => raw.includes(k));
+                return base ? base[1] !== (getStandards().currency || 'USD') : true;
             },
             execute: (ctx) => {
                 window.open(buildUrl('https://www.google.com/search?q=%s+convert', ctx.text), '_blank');
@@ -531,8 +506,10 @@
             category: 'smart',
             icon: 'unit',
             condition: (ctx) => {
-                const units = Object.keys(Data.UNIT_CONVERSIONS || {}).join('|');
-                return new RegExp(`^[\\d,.]+\\s*°?(${units})$`, 'i').test(ctx.cleanText);
+                const match = ctx.cleanText.toLowerCase().match(new RegExp(`^[\\d,.]+\\s*°?(${Object.keys(Data.UNIT_CONVERSIONS || {}).join('|')})$`, 'i'));
+                if (!match) return false;
+                const isMetric = ['c', 'km', 'kg', 'cm', 'm', 'g'].includes(match[1]);
+                return (getStandards().units || 'metric') === 'metric' ? !isMetric : isMetric;
             },
             execute: (ctx) => {
                 window.open(buildUrl('https://www.google.com/search?q=%s+conversion', ctx.cleanText), '_blank');
@@ -587,7 +564,9 @@
                     items: [{
                         label: 'Copy ISO',
                         icon: 'copy',
-                        onClick: () => navigator.clipboard.writeText(isoString)
+                        onClick: () => {
+                            if (navigator.clipboard) navigator.clipboard.writeText(isoString).catch(e => console.warn(e));
+                        }
                     }]
                 };
             }
@@ -715,6 +694,22 @@
                     type: 'html',
                     content: `<img src="${url}" class="qr-code" alt="QR Code" style="display:block; width:150px; height:150px; background:white; padding:4px; border-radius:4px;">`
                 };
+            }
+        },
+
+        {
+            id: 'convert_all',
+            label: 'Convert All',
+            category: 'smart',
+            icon: 'refresh',
+            condition: (ctx) => true,
+            execute: (ctx) => {
+                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                    if (tabs[0] && tabs[0].id) {
+                        chrome.tabs.sendMessage(tabs[0].id, { type: 'LIGHTHOUSE_CONVERT_ALL' });
+                    }
+                });
+                return { success: true, message: 'Converting...' };
             }
         },
 
