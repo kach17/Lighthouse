@@ -39,7 +39,13 @@
                   if (e.key === 'Shift' || e.key.startsWith('Arrow')) handleInteraction(e);
                   break;
               case 'keydown':
-                  if (e.key === 'Escape') forceCleanup();
+                  if (e.key === 'Escape') {
+                      forceCleanup();
+                  } else if (e.key === 'Tab' && State.mode === 'SNIPPET_MENU' && State.activeActions && State.activeActions.length > 0) {
+                      e.preventDefault();
+                      State.activeActions[0].execute();
+                      forceCleanup();
+                  }
                   break;
               case 'input':
                   if ((UI.isActionActive && UI.isActionActive()) || UI.contains(e.target)) return;
@@ -52,7 +58,9 @@
                   if (e.target.closest('a') || UI.contains(e.target)) {
                       clearTimeout(linkHoverTimer);
                       linkDestroyTimer = setTimeout(() => { 
-                          if (!UI.contains(e.relatedTarget) && !window.getSelection().toString()) forceCleanup(); 
+                          if (!UI.contains(e.relatedTarget) && State.mode === 'LINK' && !window.getSelection().toString()) {
+                              forceCleanup();
+                          }
                       }, 200);
                   }
                   break;
@@ -161,6 +169,7 @@
       // 1. Fast Fail: Only Inputs/Textareas
       const el = e.target;
       if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return;
+      if (UI.contains(el)) return;
       
       // 2. Get current value and cursor position
       const val = el.value;
@@ -169,39 +178,84 @@
       // 3. Find the start of the current line
       const textBeforeCursor = val.substring(0, cursor);
       const lastNewlineIndex = textBeforeCursor.lastIndexOf('\n');
-      // If no newline, start is 0. If newline found, start is index + 1
       const lineStartIndex = lastNewlineIndex === -1 ? 0 : lastNewlineIndex + 1;
-      
       const currentLineText = textBeforeCursor.substring(lineStartIndex);
       
-      // 4. Must start with //
-      if (!currentLineText.startsWith('//')) return;
+      // 4. Must contain //
+      const matchPos = currentLineText.lastIndexOf('//');
+      if (matchPos === -1) {
+          if (State.mode === 'SNIPPET_MENU') forceCleanup();
+          return;
+      }
       
-      // 5. Trigger Check: Did we just type a Space or Enter?
+      // 5. Must start at index 0 or immediately follow a space
+      if (matchPos > 0 && currentLineText[matchPos - 1] !== ' ') {
+          if (State.mode === 'SNIPPET_MENU') forceCleanup();
+          return;
+      }
+      
+      const triggerTextWithSlashes = currentLineText.substring(matchPos);
+      
       const isSpace = e.data === ' ';
       const isEnter = e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph';
       
-      if (!isSpace && !isEnter) return;
+      const rawTrigger = triggerTextWithSlashes.substring(2);
+      const triggerTextForMatch = (isSpace || isEnter) ? rawTrigger.substring(0, rawTrigger.length - (isSpace ? 1 : 0)).trim() : rawTrigger.trim();
       
-      // 6. Extract the potential shortcut
-      // It's everything between // and the cursor (minus the space/newline we just typed)
-      const triggerText = currentLineText.substring(2, currentLineText.length - (isSpace ? 1 : 0)).trim();
-      
-      // 7. Find Match
       const shortcuts = (State.settings && State.settings.shortcuts) ? State.settings.shortcuts : [];
-      const match = shortcuts.find(s => s.trigger === triggerText);
+      let matches = shortcuts.filter(s => s.trigger.startsWith(triggerTextForMatch));
       
-      if (match) {
-          // 8. Replace
-          // Calculate range to replace: "//" + trigger + " "
-          // We replace relative to the cursor
-          const lengthToReplace = 2 + triggerText.length + (isSpace ? 1 : 0);
-          const start = cursor - lengthToReplace;
-          
-          if (start >= 0) {
-              el.setSelectionRange(start, cursor);
-              document.execCommand('insertText', false, match.expansion);
+      // Handle actual expansion if Space/Enter pressed
+      if (isSpace || isEnter) {
+          const exactMatch = shortcuts.find(s => s.trigger === triggerTextForMatch);
+          if (exactMatch) {
+              const lengthToReplace = 2 + triggerTextForMatch.length + (isSpace ? 1 : 0);
+              const start = cursor - lengthToReplace;
+              if (start >= 0) {
+                  el.setSelectionRange(start, cursor);
+                  document.execCommand('insertText', false, exactMatch.expansion);
+                  forceCleanup();
+              }
+          } else {
+              if (State.mode === 'SNIPPET_MENU') forceCleanup();
           }
+          return;
+      }
+
+      // Render Snippet Menu UI if not typing a trigger key
+      if (matches.length > 0) {
+          const ctx = SelLib.getContext();
+          
+          // Force header to display trigger shorthand cleanly
+          ctx.text = triggerTextWithSlashes;
+          ctx.hasText = true;
+          
+          State.ctx = ctx;
+          State.mode = 'SNIPPET_MENU';
+          
+          // Build actions natively compatible with standard ui.js loop
+          State.activeActions = matches.slice(0, 4).map((match, i) => ({
+              id: 'snippet-' + i,
+              label: match.trigger,
+              icon: 'chat', // Universal icon, hidden by textOnly
+              textOnly: true, // Tells UI to render this as a text button natively
+              keepOpen: false,
+              execute: () => {
+                  const start = cursor - triggerTextWithSlashes.length;
+                  if (start >= 0) {
+                      el.setSelectionRange(start, cursor);
+                      document.execCommand('insertText', false, match.expansion);
+                  }
+                  return { success: true };
+              },
+              preview: () => ({
+                  previewText: `<div style="text-align: left; opacity: 0.9; font-family: var(--so-font-mono); font-size: 11px; white-space: pre-wrap; line-height: 1.4;">${match.expansion}</div>`
+              })
+          }));
+          
+          UI.render(State);
+      } else {
+          if (State.mode === 'SNIPPET_MENU') forceCleanup();
       }
   }
 

@@ -258,9 +258,12 @@
     function createButton(def, ctx, tools) {
         let labelText = def.label;
         
+        let className = 'lighthouse-btn';
+        if (def.textOnly) className += ' text-only-btn';
+
         // Base Button
         const btn = $.create('button', {
-            className: 'lighthouse-btn',
+            className: className,
             attrs: { 'data-action': def.id },
             children: [ 
                 $.createSmartIcon(def.icon, def.iconUrl, def.label),

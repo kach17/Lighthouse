@@ -146,7 +146,7 @@
 .lighthouse-btn:hover .lighthouse-label { opacity: 1; }
 .lighthouse-popover .lighthouse-label { bottom: -28px; z-index: 30; }
 #lighthouse-extension-tooltip.mode-bottom .lighthouse-label, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-label { bottom: auto; top: -30px; }
-#lighthouse-extension-tooltip .lighthouse-btn:has(.lighthouse-popover) .lighthouse-label { opacity: 0 !important; }
+#lighthouse-extension-tooltip .lighthouse-btn:not(.text-only-btn):has(.lighthouse-popover) .lighthouse-label { opacity: 0 !important; }
 
 #lighthouse-extension-tooltip .lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: 20px; background: transparent; z-index: 10; }
 #lighthouse-extension-tooltip.mode-top .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-bottom .lighthouse-btn.has-popover::after { bottom: 100%; }
@@ -159,11 +159,12 @@
 .lighthouse-tooltip-draghandle-circle.draghandle-triangle { border-radius: 4px !important; transform: translate(-50%) rotate(45deg); }
 .lighthouse-tooltip-draghandle-circle.draghandle-square { border-radius: 1.5px !important; }
 .lighthouse-tooltip-draghandle-circle.draghandle-rhombus { border-radius: 1.5px !important; transform: rotate(45deg); }
-/* Text-only popover buttons (e.g. spellcheck suggestions) */
-#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn { width: auto; padding: 4px 10px; border-radius: var(--so-radius); }
-#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn .lighthouse-label { display: block; position: static; opacity: 1; transform: none; background: transparent; box-shadow: none; color: var(--so-text-color); font-size: 13px; padding: 0; transition: none; }
-#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn svg,
-#lighthouse-extension-tooltip .lighthouse-popover .text-only-btn img { display: none; }
+/* Text-only secondary buttons (e.g. spellcheck suggestions, snippet completions) */
+#lighthouse-extension-tooltip .text-only-btn { width: auto; padding: 4px 10px; border-radius: var(--so-radius); }
+#lighthouse-extension-tooltip .text-only-btn .lighthouse-label { display: block; position: static; opacity: 1; transform: none; background: transparent; box-shadow: none; color: var(--so-text-color); font-size: 13px; padding: 0; transition: none; pointer-events: none; z-index: auto; bottom: auto; top: auto; left: auto; }
+#lighthouse-extension-tooltip .text-only-btn:hover .lighthouse-label { opacity: 1; color: var(--so-hover-text); background: transparent; }
+#lighthouse-extension-tooltip .text-only-btn svg,
+#lighthouse-extension-tooltip .text-only-btn img { display: none; }
 
 /* Converted text */
 .lighthouse-converted, .lighthouse-converted-price { border-bottom: 1px dashed var(--so-accent); cursor: help; }
