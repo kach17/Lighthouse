@@ -118,10 +118,13 @@
                         clearTimeout(moreTimeout);
                         moreMenu.classList.add('visible');
                     };
-                    const hideMore = () => {
+                    const hideMore = (e) => {
+                        // If we are moving between related elements, don't hide
+                        if (e && e.relatedTarget && (moreBtn.contains(e.relatedTarget) || moreMenu.contains(e.relatedTarget))) return;
+                        
                         moreTimeout = setTimeout(() => {
                             moreMenu.classList.remove('visible');
-                        }, 200);
+                        }, 400); // More forgiving delay
                     };
 
                     moreBtn.onmouseenter = showMore;

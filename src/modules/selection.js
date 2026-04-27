@@ -189,27 +189,103 @@
         return navigator.language || 'en';
     }
 
-    function insertText(ctx, text) {
+    function insertText(ctx, text, options = {}) {
+        const select = options.select !== undefined ? options.select : false;
+        
         if (ctx.isForm) {
             const el = ctx.element;
             const start = el.selectionStart;
+            let end = el.selectionEnd;
+            let finalText = text;
+            
+            // Apply Smart Indentation
+            if (options.smartIndent && options.startLineText !== undefined) {
+                const indentationMatch = options.startLineText.match(/^\s*/);
+                if (indentationMatch && indentationMatch[0].length > 0) {
+                    finalText = finalText.replace(/\n/g, '\n' + indentationMatch[0]);
+                }
+            }
+            
+            // Apply Smart Punctuation Collision
+            if (options.smartPunctuation) {
+                const val = el.value || '';
+                const charAfterCursor = val[end] || '';
+                if (charAfterCursor) {
+                    const endsWithPunctuation = /[.,!?;:\s]$/.test(finalText);
+                    if (endsWithPunctuation && finalText.slice(-1) === charAfterCursor) {
+                        end += 1; // Swallow the duplicate character by expanding the selection
+                    }
+                }
+                
+                if (options.appendSpace && !/\s$/.test(finalText)) {
+                    finalText += ' ';
+                }
+            }
+            
+            // Ensure selection includes our shifted end for collisions
+            if (end !== el.selectionEnd) {
+                el.setSelectionRange(start, end);
+            }
             
             // Try execCommand first to preserve undo stack (Ctrl+Z)
             el.focus();
-            const success = document.execCommand('insertText', false, text);
+            const success = document.execCommand('insertText', false, finalText);
             
             if (success) {
-                // execCommand places cursor at the end, we need to re-select
-                // This is critical for actions like 'case' cycling where we want to keep acting on the same text.
-                el.setSelectionRange(start, start + text.length);
+                // execCommand places cursor at the end. Only re-select if explicitly requested.
+                if (select) {
+                    el.setSelectionRange(start, start + finalText.length);
+                }
             } else {
                 // Fallback if execCommand fails
-                el.setRangeText(text, start, el.selectionEnd, 'select');
+                el.setRangeText(finalText, start, el.selectionEnd, select ? 'select' : 'end');
                 el.dispatchEvent(new Event('input', { bubbles: true }));
             }
         } else if (ctx.isEditable) {
-            document.execCommand('insertText', false, text);
+            document.execCommand('insertText', false, text); // Currently doesn't process text shifts for contentEditable
+            // In contenteditable, execCommand naturally collapses to the end.
+            if (select) {
+                const sel = window.getSelection();
+                if (sel.rangeCount > 0) {
+                    const range = sel.getRangeAt(0);
+                    range.setStart(range.startContainer, Math.max(0, range.endOffset - text.length));
+                }
+            }
         }
+    }
+
+    function smartDelete(ctx) {
+        if (ctx.isForm) {
+            const el = ctx.element;
+            const val = el.value || '';
+            const s = el.selectionStart;
+            const e = el.selectionEnd;
+            if (s > 0 && e < val.length) {
+                if (val[s - 1] === ' ' && val[e] === ' ') {
+                    el.setSelectionRange(s - 1, e);
+                }
+            }
+        } else if (ctx.isEditable) {
+            const sel = window.getSelection();
+            if (sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0);
+                try {
+                    const pre = range.cloneRange();
+                    pre.collapse(true);
+                    pre.setStart(pre.startContainer, Math.max(0, pre.startOffset - 1));
+                    const post = range.cloneRange();
+                    post.collapse(false);
+                    post.setEnd(post.endContainer, post.endOffset + 1);
+                    if (pre.toString() === ' ' && post.toString() === ' ') {
+                        sel.removeAllRanges();
+                        const newRange = range.cloneRange();
+                        newRange.setStart(pre.startContainer, pre.startOffset);
+                        sel.addRange(newRange);
+                    }
+                } catch(err) {} 
+            }
+        }
+        document.execCommand('delete');
     }
 
     function handleExpand() {
@@ -502,6 +578,7 @@
         getLinkContext,
         getLanguage,
         insertText,
+        smartDelete,
         handleExpand,
         performSnap,
         getPointFromCoords,

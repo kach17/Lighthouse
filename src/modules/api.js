@@ -27,21 +27,73 @@
     }
 
     /**
+     * Centralized Background Messaging Bridge
+     */
+    function asyncQuery(action, payload, valueKey = 'result', fallback = null) {
+        return new Promise(resolve => {
+            chrome.runtime.sendMessage({ action, ...payload }, (res) => {
+                if (chrome.runtime.lastError) {
+                    if ($ && $.logEvent) $.logEvent('API', 'ERROR', chrome.runtime.lastError.message);
+                    return resolve(fallback);
+                }
+                if (res && res.success) {
+                    resolve(valueKey ? res[valueKey] : res);
+                } else {
+                    if ($ && $.logEvent) $.logEvent('API', 'ERROR', res ? res.error : 'Unknown Error');
+                    resolve(fallback);
+                }
+            });
+        });
+    }
+
+    /**
      * 2. The Toolkit
      */
     function getTools(ctx) {
         return {
-            // UI: Now redirects to the Toast system
+            // UI
             toast: (msg, type = 'success') => {
                 if (window.LighthouseUI && window.LighthouseUI.showToast) {
                     window.LighthouseUI.showToast(msg, type);
                 }
             },
+            buildCopyMenu: (copyText, previewText = copyText, label = 'Copy') => {
+                const items = [{
+                    label: label,
+                    icon: 'copy',
+                    onClick: () => {
+                        if (navigator.clipboard) navigator.clipboard.writeText(String(copyText)).catch(()=>{});
+                        if (window.LighthouseUI && window.LighthouseUI.showToast) window.LighthouseUI.showToast('Copied!', 'success');
+                    }
+                }];
+                
+                // Add Convert All to these contextual submenus if it looks like there's something to convert
+                const t = ctx.cleanText || '';
+                if (t.length > 2 && (/\d/.test(t) || /[$£€¥₹₽]/.test(t))) {
+                    items.push({
+                        label: 'Convert Page',
+                        icon: 'refresh',
+                        onClick: () => document.dispatchEvent(new CustomEvent('LIGHTHOUSE_CONVERT_ALL'))
+                    });
+                }
+
+                return {
+                    type: 'menu',
+                    previewText: typeof previewText === 'string' ? previewText : undefined,
+                    content: typeof previewText !== 'string' ? previewText.content : undefined,
+                    items
+                };
+            },
             
             // Text
-            replace: (newText) => {
+            replace: (newText, options = {}) => {
                 if (ctx.isInput && ctx.element) {
-                    SelLib.insertText(ctx, String(newText));
+                    SelLib.insertText(ctx, String(newText), options);
+                }
+            },
+            delete: () => {
+                if (ctx.isInput && ctx.element) {
+                    SelLib.smartDelete(ctx);
                 }
             },
             
@@ -73,48 +125,18 @@
                 }
             },
             
-            // Network
-            fetchRate: (base, target) => {
-                return new Promise(resolve => {
-                    chrome.runtime.sendMessage({ action: 'GET_RATE', base, target }, (res) => {
-                        resolve((res && res.success) ? res.rate : null);
-                    });
-                });
-            },
+            // Network (using Centralized Bridge)
+            fetchRate: (base, target) => asyncQuery('GET_RATE', { base, target }, 'rate', null),
             translate: (text) => {
-                const state = window.LighthouseState;
-                const s = (state && state.settings) ? state.settings.standards : null;
-                const lang = s ? s.language : 'en';
-                return new Promise(resolve => {
-                    chrome.runtime.sendMessage({ action: 'TRANSLATE', text, targetLang: lang }, (res) => {
-                        resolve((res && res.success) ? res.result : null);
-                    });
-                });
+                const s = window.LighthouseState?.settings?.standards;
+                return asyncQuery('TRANSLATE', { text, targetLang: s ? s.language : 'en' }, 'result', null);
             },
             define: (text) => {
-                const state = window.LighthouseState;
-                const s = (state && state.settings) ? state.settings.standards : null;
-                const lang = s ? s.language : 'en';
-                return new Promise(resolve => {
-                    chrome.runtime.sendMessage({ action: 'DEFINE', text, targetLang: lang }, (res) => {
-                        resolve((res && res.success) ? res.result : null);
-                    });
-                });
+                const s = window.LighthouseState?.settings?.standards;
+                return asyncQuery('DEFINE', { text, targetLang: s ? s.language : 'en' }, 'result', null);
             },
-            spellcheck: (text) => {
-                return new Promise(resolve => {
-                    chrome.runtime.sendMessage({ action: 'SPELLCHECK', text }, (res) => {
-                        resolve((res && res.success) ? res.result : []);
-                    });
-                });
-            },
-            fetchRaw: (url, options = {}) => {
-                return new Promise(resolve => {
-                    chrome.runtime.sendMessage({ action: 'FETCH_RAW', url, options }, (res) => {
-                        resolve((res && res.success) ? res.result : null);
-                    });
-                });
-            },
+            spellcheck: (text) => asyncQuery('SPELLCHECK', { text }, 'result', []),
+            fetchRaw: (url, options = {}) => asyncQuery('FETCH_RAW', { url, options }, 'result', null),
 
             // Math
             math: MathLib 

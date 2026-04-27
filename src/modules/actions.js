@@ -21,7 +21,7 @@
         const html = `<div style="max-width: 260px; text-align: left; white-space: normal; line-height: 1.4; padding: 4px;">
             <div style="font-size: 12px; color: var(--so-text-color);">${text}</div>
         </div>`;
-        return { type: 'menu', content: html, items: [{ label: 'Copy', icon: 'copy', onClick: () => tools.copy(text) }] };
+        return tools.buildCopyMenu(text, { content: html });
     };
 
     // #2: Shared date parser for date_convert action
@@ -345,9 +345,9 @@
             category: 'input',
             icon: 'backspace',
             condition: (ctx) => ctx.isInput && ctx.hasText,
-            execute: (ctx) => {
+            execute: (ctx, tools) => {
                 ctx.element.focus();
-                document.execCommand('delete');
+                tools.delete();
                 return { success: true };
             }
         },
@@ -383,7 +383,7 @@
                 if (t === t.toUpperCase()) next = t.toLowerCase();
                 else if (t === t.toLowerCase()) next = t.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase());
                 else next = t.toUpperCase();
-                tools.replace(next);
+                tools.replace(next, { select: true });
                 return { success: true };
             }
         },
@@ -486,18 +486,11 @@
                 
                 let label = '...';
                 if (base !== target) {
-                    const rate = await MathLib.fetchRate(base, target);
+                    const rate = await tools.fetchRate(base, target);
                     if (rate) label = `${(amount * rate).toFixed(2)} ${target}`;
                     else label = 'Unavailable';
                 }
-                return {
-                    type: 'menu', previewText: label,
-                    items: [{
-                        label: 'Copy',
-                        icon: 'copy',
-                        onClick: () => tools.copy(label)
-                    }]
-                };
+                return tools.buildCopyMenu(label);
             }
         },
         {
@@ -523,15 +516,7 @@
                 const conv = Data.UNIT_CONVERSIONS[unitKey];
                 
                 const result = conv ? `${conv.func(val).toFixed(2)} ${conv.target}` : '...';
-                return {
-                    type: 'menu', 
-                    previewText: result,
-                    items: [{
-                        label: 'Copy',
-                        icon: 'copy',
-                        onClick: () => tools.copy(result)
-                    }]
-                };
+                return tools.buildCopyMenu(result);
             }
         },
         
@@ -554,21 +539,12 @@
                 tools.copy(iso);
                 return { success: true, message: `Copied: ${iso}` };
             },
-            preview: (ctx) => {
+            preview: (ctx, tools) => {
                 const date = parseDate(ctx.cleanText);
                 // Show Relative Time on hover
                 const relativeTime = Utils.getRelativeTime(date);
                 const isoString = date.toISOString();
-                return {
-                    previewText: relativeTime,
-                    items: [{
-                        label: 'Copy ISO',
-                        icon: 'copy',
-                        onClick: () => {
-                            if (navigator.clipboard) navigator.clipboard.writeText(isoString).catch(e => console.warn(e));
-                        }
-                    }]
-                };
+                return tools.buildCopyMenu(isoString, relativeTime, 'Copy ISO');
             }
         },
         {
@@ -618,13 +594,13 @@
                     return { success: true, message: 'Base64 Decoded' };
                 } catch(e) { return { success: false }; }
             },
-            preview: (ctx) => {
+            preview: (ctx, tools) => {
                 try {
                     const decoded = atob(ctx.cleanText);
                     const safe = decoded.length > 20 ? decoded.substring(0, 20) + '...' : decoded;
                     // Only show if decoded string looks readable
                     if (/[\x00-\x08\x0E-\x1F]/.test(decoded)) return { type: 'text', content: 'Binary Data' };
-                    return { type: 'text', content: `"${safe}"` };
+                    return tools.buildCopyMenu(decoded, `"${safe}"`);
                 } catch(e) { return null; }
             }
         },
@@ -661,18 +637,31 @@
                 }
                 return { success: false };
             },
-            preview: (ctx) => {
+            preview: (ctx, tools) => {
                 const color = ctx.cleanText;
-                // Create chip via DOM to avoid innerHTML injection from user-selected text
-                const chip = document.createElement('span');
-                chip.className = 'lighthouse-chip round';
-                chip.style.background = color;
-                chip.style.marginRight = '6px';
-                const label = document.createTextNode(color);
-                const wrapper = document.createElement('span');
-                wrapper.appendChild(chip);
-                wrapper.appendChild(label);
-                return { type: 'menu', previewNode: wrapper };
+                
+                let reverseConv = '';
+                if (color.startsWith('#')) {
+                    let hex = color.substring(1);
+                    if (hex.length === 3) hex = hex.split('').map(c => c+c).join('');
+                    const num = parseInt(hex, 16);
+                    reverseConv = `rgb(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255})`;
+                } else {
+                    const parts = color.match(/\d+/g);
+                    if (parts) {
+                        reverseConv = '#' + parts.map(p => {
+                            const h = parseInt(p).toString(16);
+                            return h.length === 1 ? '0' + h : h;
+                        }).join('');
+                    }
+                }
+                
+                const html = `<div style="display:flex; align-items:center;">
+                    <span style="display:inline-block; width:14px; height:14px; border-radius:50%; background:${color}; margin-right:6px; flex-shrink:0; border:1px solid rgba(0,0,0,0.1);"></span>
+                    <span>${color}</span>
+                </div>`;
+                
+                return tools.buildCopyMenu(reverseConv || color, { content: html }, 'Copy Converted');
             }
         },
 
@@ -694,22 +683,6 @@
                     type: 'html',
                     content: `<img src="${url}" class="qr-code" alt="QR Code" style="display:block; width:150px; height:150px; background:white; padding:4px; border-radius:4px;">`
                 };
-            }
-        },
-
-        {
-            id: 'convert_all',
-            label: 'Convert All',
-            category: 'smart',
-            icon: 'refresh',
-            condition: (ctx) => true,
-            execute: (ctx) => {
-                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                    if (tabs[0] && tabs[0].id) {
-                        chrome.tabs.sendMessage(tabs[0].id, { type: 'LIGHTHOUSE_CONVERT_ALL' });
-                    }
-                });
-                return { success: true, message: 'Converting...' };
             }
         },
 

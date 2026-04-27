@@ -1,63 +1,37 @@
-/**
- * Lighthouse - Math & Conversions
- * Handles safe calculation and currency/unit conversions.
- */
 (function(global) {
-
     const MathLib = {
-        
-        /**
-         * Safe Math Evaluator
-         * Uses a restricted character set to prevent code execution.
-         */
         safeCalculate: (expr) => {
-            if (!expr || typeof expr !== 'string') return null;
-            
-            // Remove spaces and validate characters
-            const clean = expr.replace(/\s+/g, '');
-            if (!/^[\d+\-*/.()]+$/.test(clean)) return null;
-            
-            try {
-                // eslint-disable-next-line no-new-func
-                const res = new Function(`return (${clean})`)();
-                return isFinite(res) ? res : null;
-            } catch (e) {
-                return null;
-            }
+            try { return Function(`'use strict'; return (${expr.replace(/[^\d+\-*/.()\s]/g, '')})`)(); } catch (e) { return null; }
         },
-
-        /**
-         * Parse Number from Localized String
-         * Handles "1,234.56" vs "1.234,56"
-         */
-        parseLocaleNumber: (stringNumber) => {
-            const clean = stringNumber.replace(/[^0-9,.-]/g, '');
-            // Simple heuristic: if last separator is comma, it's decimal
-            if (clean.indexOf(',') > clean.indexOf('.')) {
-                return parseFloat(clean.replace(/\./g, '').replace(',', '.'));
-            }
-            return parseFloat(clean.replace(/,/g, ''));
+        parseLocaleNumber: (str) => {
+            const clean = str.replace(/[^0-9,.-]/g, '');
+            return (clean.indexOf(',') > clean.indexOf('.')) ? parseFloat(clean.replace(/\./g, '').replace(',', '.')) : parseFloat(clean.replace(/,/g, ''));
         },
-
-        /**
-         * Fetch Currency Rate
-         * Uses a public API (or mock fallback)
-         */
         fetchRate: async (base, target) => {
             if (base === target) return 1;
-            try {
-                // Using a free API (e.g., Frankfurter)
-                const res = await fetch(`https://api.frankfurter.app/latest?from=${base}&to=${target}`);
-                if (!res.ok) throw new Error('Network response was not ok');
-                const data = await res.json();
-                return data.rates[target];
-            } catch (e) {
-                console.warn('[Lighthouse] Currency fetch failed:', e);
-                return null;
+            return new Promise(r => chrome.runtime.sendMessage({ action: 'GET_RATE', base, target }, res => r(res?.success ? res.rate : null)));
+        },
+        convertAllText: async (text, targetCurrency, targetUnitSystem, rateFetcher) => {
+            const Data = global.LighthouseData;
+            if (!Data) return { text, modified: false };
+            let newText = text, modified = false;
+            const unitRegex = new RegExp(`(^|\\s)([\\d,.]+)\\s*°?(${Object.keys(Data.UNIT_CONVERSIONS || {}).join('|')})(?=\\s|$|[.,])`, 'gi');
+            newText = newText.replace(unitRegex, (m, s, v, u) => {
+                const c = u.toLowerCase(), conv = Data.UNIT_CONVERSIONS[c];
+                if (!conv || (targetUnitSystem === 'metric' && ['c', 'km', 'kg', 'cm', 'm', 'g'].includes(c)) || (targetUnitSystem === 'imperial' && ['f', 'mi', 'lbs', 'in', 'ft', 'oz'].includes(c))) return m;
+                modified = true;
+                return `${s}${conv.func(parseFloat(v.replace(/,/g, ''))).toFixed(2)} ${conv.target}`;
+            });
+            const currKeys = Object.keys(Data.CURRENCY_MAP || {}).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+            const currRegex = new RegExp(`(^|\\s)([\\d,.]+)\\s*(${currKeys})|(^|\\s)(${currKeys})\\s*([\\d,.]+)`, 'gi');
+            for (const m of [...newText.matchAll(currRegex)]) {
+                const v = m[2] || m[6], k = (m[3] || m[5]).toUpperCase(), b = Data.CURRENCY_MAP[k];
+                if (!b || b === targetCurrency) continue;
+                const r = await rateFetcher(b, targetCurrency);
+                if (r) { modified = true; newText = newText.replace(m[0], `${m[1] || m[4] || ''}${(parseFloat(v.replace(/,/g, '')) * r).toFixed(2)} ${targetCurrency}`); }
             }
+            return { text: newText, modified };
         }
     };
-
     global.LighthouseMath = MathLib;
-
 })(typeof self !== 'undefined' ? self : window);

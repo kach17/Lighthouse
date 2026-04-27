@@ -116,6 +116,10 @@
               handleTextExpansion(e);
           }
       });
+      // Custom Event listener (from Actions/UI in same page)
+      document.addEventListener('LIGHTHOUSE_CONVERT_ALL', () => {
+          convertAllOnPage();
+      });
       // Message Listener
       chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           if (request.type === 'LIGHTHOUSE_CONVERT_ALL') {
@@ -126,9 +130,7 @@
 
   async function convertAllOnPage() {
       const Config = window.LighthouseConfig;
-      const MathLib = window.LighthouseMath;
       const std = (State.settings && State.settings.standards) ? State.settings.standards : Config.defaults.standards;
-      
       const targetCurrency = std.currency || 'USD';
       const targetUnitSystem = std.units || 'metric';
       
@@ -149,14 +151,22 @@
           }
       }
       
+      const safeFetchRate = (base, target) => {
+          return new Promise(resolve => {
+              chrome.runtime.sendMessage({ action: 'GET_RATE', base, target }, (res) => {
+                  resolve((res && res.success) ? res.rate : null);
+              });
+          });
+      };
+
       for (const textNode of textNodes) {
           let originalText = textNode.nodeValue;
           let newText = originalText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           
-          const result = await MathLib.convertAllText(newText, targetCurrency, targetUnitSystem, MathLib.fetchRate);
+          if (!window.LighthouseMath || !window.LighthouseMath.convertAllText) continue;
+          const result = await window.LighthouseMath.convertAllText(newText, targetCurrency, targetUnitSystem, safeFetchRate);
           
           if (result.modified) {
-              // Wrap converted text in a span so we don't convert it again
               const span = document.createElement('span');
               span.classList.add('lighthouse-converted');
               span.innerHTML = result.text;
@@ -213,7 +223,16 @@
               const start = cursor - lengthToReplace;
               if (start >= 0) {
                   el.setSelectionRange(start, cursor);
-                  document.execCommand('insertText', false, exactMatch.expansion);
+                  
+                  const ctx = SelLib.getContext();
+                  const tools = window.LighthouseAPI.getTools(ctx);
+                  
+                  tools.replace(exactMatch.expansion, {
+                      smartIndent: true, 
+                      startLineText: currentLineText.substring(0, matchPos),
+                      smartPunctuation: true,
+                      appendSpace: isSpace
+                  });
                   forceCleanup();
               }
           } else {
@@ -244,7 +263,15 @@
                   const start = cursor - triggerTextWithSlashes.length;
                   if (start >= 0) {
                       el.setSelectionRange(start, cursor);
-                      document.execCommand('insertText', false, match.expansion);
+                      
+                      const exeCtx = SelLib.getContext();
+                      const tools = window.LighthouseAPI.getTools(exeCtx);
+
+                      tools.replace(match.expansion, {
+                          smartIndent: true, 
+                          startLineText: currentLineText.substring(0, matchPos),
+                          smartPunctuation: true
+                      });
                   }
                   return { success: true };
               },
