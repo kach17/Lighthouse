@@ -45,6 +45,24 @@
                       e.preventDefault();
                       State.activeActions[0].execute();
                       forceCleanup();
+                  } else {
+                      const WRAP_PAIRS = { "'": "'", '"': '"', '(': ')', '[': ']', '{': '}', '<': '>' };
+                      if (WRAP_PAIRS[e.key]) {
+                          const activeEl = document.activeElement;
+                          const isForm = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+                          if (isForm && activeEl.selectionStart !== activeEl.selectionEnd) {
+                              e.preventDefault();
+                              window.LighthouseSelection.insertText({ isForm: true, element: activeEl }, e.key);
+                              forceCleanup();
+                          } else if (activeEl && activeEl.isContentEditable) {
+                              const sel = window.getSelection();
+                              if (sel && !sel.isCollapsed && sel.toString().length > 0) {
+                                  e.preventDefault();
+                                  window.LighthouseSelection.insertText({ isEditable: true, element: activeEl }, e.key);
+                                  forceCleanup();
+                              }
+                          }
+                      }
                   }
                   break;
               case 'input':

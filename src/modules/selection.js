@@ -191,14 +191,16 @@
 
     function insertText(ctx, text, options = {}) {
         const select = options.select !== undefined ? options.select : false;
+        const WRAP_PAIRS = { "'": "'", '"': '"', '(': ')', '[': ']', '{': '}', '<': '>' };
         
         if (ctx.isForm) {
             const el = ctx.element;
-            const start = el.selectionStart;
+            let start = el.selectionStart;
             let end = el.selectionEnd;
             let finalText = text;
+            let targetCursorPos = null;
             
-            // Apply Smart Indentation
+            // Smart Indentation
             if (options.smartIndent && options.startLineText !== undefined) {
                 const indentationMatch = options.startLineText.match(/^\s*/);
                 if (indentationMatch && indentationMatch[0].length > 0) {
@@ -206,24 +208,32 @@
                 }
             }
             
-            // Apply Smart Punctuation Collision
-            if (options.smartPunctuation) {
-                const val = el.value || '';
-                const charAfterCursor = val[end] || '';
-                if (charAfterCursor) {
-                    const endsWithPunctuation = /[.,!?;:\s]$/.test(finalText);
-                    if (endsWithPunctuation && finalText.slice(-1) === charAfterCursor) {
-                        end += 1; // Swallow the duplicate character by expanding the selection
-                    }
+            const val = el.value || '';
+            const charBefore = start > 0 ? val[start - 1] : '';
+            const charAfter = end < val.length ? val[end] : '';
+
+            // Handle Wrapping
+            if (WRAP_PAIRS[text] && Math.abs(end - start) > 0) {
+                const selText = val.substring(start, end);
+                const match = selText.match(/^(\s*)(.*?)(\s*)$/s);
+                if (match) {
+                    finalText = match[1] + text + match[2] + WRAP_PAIRS[text] + match[3];
+                    targetCursorPos = start + match[1].length + 1 + match[2].length + 1;
                 }
-                
-                if (options.appendSpace && !/\s$/.test(finalText)) {
-                    finalText += ' ';
+            } else {
+                // 1. Cleanup orphaned spaces on delete/cut (empty insert)
+                if (!finalText && charBefore === ' ' && charAfter === ' ') {
+                    end += 1;
+                }
+                // 2. Ensure spacing around inserted text so words don't stick together
+                else if (finalText) {
+                    if (/\w$/.test(charBefore) && /^\w/.test(finalText)) finalText = ' ' + finalText;
+                    if (/\w$/.test(finalText) && /^\w/.test(charAfter)) finalText += ' ';
                 }
             }
-            
-            // Ensure selection includes our shifted end for collisions
-            if (end !== el.selectionEnd) {
+
+            // Ensure selection includes our shifted bounds for collisions
+            if (start !== el.selectionStart || end !== el.selectionEnd) {
                 el.setSelectionRange(start, end);
             }
             
@@ -232,60 +242,45 @@
             const success = document.execCommand('insertText', false, finalText);
             
             if (success) {
-                // execCommand places cursor at the end. Only re-select if explicitly requested.
-                if (select) {
+                if (targetCursorPos !== null) {
+                    el.setSelectionRange(targetCursorPos, targetCursorPos);
+                } else if (select) {
                     el.setSelectionRange(start, start + finalText.length);
+                } else if ((!text.endsWith(' ') && finalText.endsWith(' ')) || (!text && charBefore === ' ' && val.substring(start, end).endsWith(' '))) {
+                    el.setSelectionRange(el.selectionEnd - 1, el.selectionEnd - 1);
                 }
             } else {
                 // Fallback if execCommand fails
                 el.setRangeText(finalText, start, el.selectionEnd, select ? 'select' : 'end');
+                if (targetCursorPos !== null) {
+                    el.setSelectionRange(targetCursorPos, targetCursorPos);
+                } else if (!select && ((!text.endsWith(' ') && finalText.endsWith(' ')) || (!text && charBefore === ' ' && val.substring(start, end).endsWith(' ')))) {
+                    el.setSelectionRange(el.selectionEnd - 1, el.selectionEnd - 1);
+                }
                 el.dispatchEvent(new Event('input', { bubbles: true }));
             }
         } else if (ctx.isEditable) {
-            document.execCommand('insertText', false, text); // Currently doesn't process text shifts for contentEditable
-            // In contenteditable, execCommand naturally collapses to the end.
+            let finalText = text;
+            const sel = window.getSelection();
+            let targetCursorOffset = null;
+            
+            if (WRAP_PAIRS[text] && sel && !sel.isCollapsed) {
+                const selText = sel.toString();
+                const match = selText.match(/^(\s*)(.*?)(\s*)$/s);
+                if (match) {
+                    finalText = match[1] + text + match[2] + WRAP_PAIRS[text] + match[3];
+                }
+            }
+            
+            document.execCommand('insertText', false, finalText); 
+            
             if (select) {
-                const sel = window.getSelection();
                 if (sel.rangeCount > 0) {
                     const range = sel.getRangeAt(0);
-                    range.setStart(range.startContainer, Math.max(0, range.endOffset - text.length));
+                    range.setStart(range.startContainer, Math.max(0, range.endOffset - finalText.length));
                 }
             }
         }
-    }
-
-    function smartDelete(ctx) {
-        if (ctx.isForm) {
-            const el = ctx.element;
-            const val = el.value || '';
-            const s = el.selectionStart;
-            const e = el.selectionEnd;
-            if (s > 0 && e < val.length) {
-                if (val[s - 1] === ' ' && val[e] === ' ') {
-                    el.setSelectionRange(s - 1, e);
-                }
-            }
-        } else if (ctx.isEditable) {
-            const sel = window.getSelection();
-            if (sel.rangeCount > 0) {
-                const range = sel.getRangeAt(0);
-                try {
-                    const pre = range.cloneRange();
-                    pre.collapse(true);
-                    pre.setStart(pre.startContainer, Math.max(0, pre.startOffset - 1));
-                    const post = range.cloneRange();
-                    post.collapse(false);
-                    post.setEnd(post.endContainer, post.endOffset + 1);
-                    if (pre.toString() === ' ' && post.toString() === ' ') {
-                        sel.removeAllRanges();
-                        const newRange = range.cloneRange();
-                        newRange.setStart(pre.startContainer, pre.startOffset);
-                        sel.addRange(newRange);
-                    }
-                } catch(err) {} 
-            }
-        }
-        document.execCommand('delete');
     }
 
     function handleExpand() {
@@ -473,8 +468,22 @@
     function snapInput(el) {
         let s = el.selectionStart, e = el.selectionEnd, txt = el.value;
         let ns = getSnap(txt, s, 'start'), ne = getSnap(txt, e, 'end');
-        if (ne < txt.length && PAIRS[txt.substring(ns, ne).trim()[0]] === txt[ne]) ne++;
-        if (ns > 0 && REVERSE_PAIRS[txt.substring(ns, ne).trim().slice(-1)] === txt[ns - 1]) ns--;
+        
+        let selText = txt.substring(ns, ne);
+        if (ne < txt.length && REVERSE_PAIRS[txt[ne]]) {
+            let openChar = REVERSE_PAIRS[txt[ne]];
+            let openCount = selText.split(openChar).length - 1;
+            let closeCount = selText.split(txt[ne]).length - 1;
+            if (openChar === txt[ne] ? (openCount % 2 !== 0) : (openCount > closeCount)) ne++;
+        }
+        selText = txt.substring(ns, ne);
+        if (ns > 0 && PAIRS[txt[ns - 1]]) {
+            let closeChar = PAIRS[txt[ns - 1]];
+            let closeCount = selText.split(closeChar).length - 1;
+            let openCount = selText.split(txt[ns - 1]).length - 1;
+            if (closeChar === txt[ns - 1] ? (closeCount % 2 !== 0) : (closeCount > openCount)) ns--;
+        }
+        
         if (ns !== s || ne !== e) el.setSelectionRange(ns, ne);
     }
     
@@ -526,8 +535,20 @@
 
         if (sNode === eNode) {
             const txt = sNode.textContent;
-            if (eOff < txt.length && PAIRS[txt.substring(sOff, eOff).trim()[0]] === txt[eOff]) { eOff++; mod = true; }
-            if (sOff > 0 && REVERSE_PAIRS[txt.substring(sOff, eOff).trim().slice(-1)] === txt[sOff - 1]) { sOff--; mod = true; }
+            let selText = txt.substring(sOff, eOff);
+            if (eOff < txt.length && REVERSE_PAIRS[txt[eOff]]) {
+                let openChar = REVERSE_PAIRS[txt[eOff]];
+                let openCount = selText.split(openChar).length - 1;
+                let closeCount = selText.split(txt[eOff]).length - 1;
+                if (openChar === txt[eOff] ? (openCount % 2 !== 0) : (openCount > closeCount)) { eOff++; mod = true; }
+            }
+            selText = txt.substring(sOff, eOff);
+            if (sOff > 0 && PAIRS[txt[sOff - 1]]) {
+                let closeChar = PAIRS[txt[sOff - 1]];
+                let closeCount = selText.split(closeChar).length - 1;
+                let openCount = selText.split(txt[sOff - 1]).length - 1;
+                if (closeChar === txt[sOff - 1] ? (closeCount % 2 !== 0) : (closeCount > openCount)) { sOff--; mod = true; }
+            }
         }
     
         if (mod) { 
@@ -578,7 +599,6 @@
         getLinkContext,
         getLanguage,
         insertText,
-        smartDelete,
         handleExpand,
         performSnap,
         getPointFromCoords,

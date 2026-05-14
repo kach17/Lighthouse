@@ -91,11 +91,6 @@
                     SelLib.insertText(ctx, String(newText), options);
                 }
             },
-            delete: () => {
-                if (ctx.isInput && ctx.element) {
-                    SelLib.smartDelete(ctx);
-                }
-            },
             
             // Clipboard
             copy: (text) => {

@@ -143,10 +143,10 @@
 .lighthouse-paste-btn span { opacity: 0.9; }
 
 .lighthouse-label { position: absolute; bottom: calc(var(--so-btn-size) * -1 + 4px); left: 50%; transform: translateX(-50%); background-color: #000; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; opacity: 0; pointer-events: none; white-space: nowrap; transition: opacity 0.15s 0.3s; font-family: var(--so-font-family); font-weight: 500; z-index: 10; }
-.lighthouse-btn:hover .lighthouse-label { opacity: 1; }
+.lighthouse-btn:hover > .lighthouse-label { opacity: 1; }
 .lighthouse-popover .lighthouse-label { bottom: -28px; z-index: 30; }
 #lighthouse-extension-tooltip.mode-bottom .lighthouse-label, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-label { bottom: auto; top: -30px; }
-#lighthouse-extension-tooltip .lighthouse-btn:not(.text-only-btn):has(.lighthouse-popover) .lighthouse-label { opacity: 0 !important; }
+#lighthouse-extension-tooltip .lighthouse-btn:not(.text-only-btn):has(.lighthouse-popover) > .lighthouse-label { opacity: 0 !important; }
 
 #lighthouse-extension-tooltip .lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: 20px; background: transparent; z-index: 10; }
 #lighthouse-extension-tooltip.mode-top .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-bottom .lighthouse-btn.has-popover::after { bottom: 100%; }

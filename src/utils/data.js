@@ -112,11 +112,11 @@
         },
         light: {
             bg:        'rgba(255, 255, 255, 0.95)',
-            border:    'rgba(203, 213, 225, 0.8)',
-            text:      '#1f2937',
+            border:    'rgba(229, 231, 235, 1)',
+            text:      '#111827',
             textSub:   '#6b7280',
-            hoverBg:   '#e5e7eb',
-            hoverText: '#1f2937',
+            hoverBg:   '#f3f4f6',
+            hoverText: '#111827',
             accent:    '#6366f1',
             radius:    '12px'
         }

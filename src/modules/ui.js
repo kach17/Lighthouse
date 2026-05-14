@@ -87,6 +87,8 @@
         } else if (ctx.hasText) {
             // Standard Header for BOTH Inputs and Selection (Always visible)
             renderTextHeader(ctx);
+            const urls = ctx.text.length <= 300 ? ctx.text.match(/https?:\/\/[^\s]+/g) : null;
+            if (urls && urls.length === 1) { ctx.url = urls[0]; renderLinkHeader(ctx); }
         }
 
         // 3. Render Actions
@@ -227,12 +229,11 @@
                     previewText: ogHtml ? null : ctx.url,
                     previewClick: () => window.open(ctx.url, '_blank'),
                     
-                    prependItems: true,
-                    items: [{
+                    items: safety.status !== 'UNKNOWN' ? [{
                         label: `Safety: ${safety.status}`,
                         icon: svg || iconKey,
-                        onClick: () => { /* Info? */ }
-                    }]
+                        onClick: () => {}
+                    }] : null
                 };
             },
             execute: () => {
@@ -255,7 +256,7 @@
 
         tooltipContainer.appendChild(linkBtn);
         tooltipContainer.appendChild($.create('div', { className: 'lighthouse-separator' }));
-        tooltipContainer.appendChild(copyBtn);
+        if (ctx.isLink) tooltipContainer.appendChild(copyBtn);
     }
 
     function createButton(def, ctx, tools) {
@@ -274,30 +275,12 @@
             ]
         });
 
-        // Result as Label Pattern
-        if (def.id === 'math') {
-            const res = window.LighthouseMath.safeCalculate(ctx.text);
-            if (res !== null) {
-                btn.querySelector('.lighthouse-label').textContent = `∑ ${Number(res.toFixed(4))}`;
-            }
-        } else if (def.id === 'currency') {
-            const txt = ctx.text.trim().toUpperCase();
-            const amount = window.LighthouseMath.parseLocaleNumber(txt);
-            let base = 'USD';
-            for (const [key, val] of Object.entries(window.LighthouseData.CURRENCY_MAP)) {
-                if (txt.includes(key)) { base = val; break; }
-            }
-            const settings = (window.LighthouseState && window.LighthouseState.settings) ? window.LighthouseState.settings : (window.LighthouseConfig ? window.LighthouseConfig.defaults : {});
-            const target = (settings.standards && settings.standards.currency) || 'USD';
-            if (base !== target && amount !== null) {
-                window.LighthouseMath.fetchRate(base, target).then(rate => {
-                    if (rate) {
-                        const converted = (amount * rate).toFixed(2);
-                        const sym = window.LighthouseData.CURRENCY_SYMBOLS?.[target] || '';
-                        const labelEl = btn.querySelector('.lighthouse-label');
-                        if (labelEl) labelEl.textContent = `${sym}${converted} ${target}`;
-                    }
-                });
+        if (typeof def.dynamicLabel === 'function') {
+            const res = def.dynamicLabel(ctx);
+            if (res instanceof Promise) {
+                res.then(val => { if (val) btn.querySelector('.lighthouse-label').textContent = val; });
+            } else if (res) {
+                btn.querySelector('.lighthouse-label').textContent = res;
             }
         }
 
