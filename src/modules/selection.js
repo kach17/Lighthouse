@@ -4,6 +4,15 @@
  */
 (function() {
     const Data = window.LighthouseData; // Import Data
+
+    function isEditableElement(el) {
+        if (!el) return { isForm: false, isEditable: false };
+        const invalidTypes = ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit', 'password'];
+        const isForm = el.tagName === 'TEXTAREA' ||
+            (el.tagName === 'INPUT' && !invalidTypes.includes((el.type || '').toLowerCase()));
+        const isEditable = !!el.isContentEditable;
+        return { isForm, isEditable };
+    }
     const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
     
     // Use Data.js for snapping logic
@@ -192,14 +201,16 @@
     function insertText(ctx, text, options = {}) {
         const select = options.select !== undefined ? options.select : false;
         const WRAP_PAIRS = { "'": "'", '"': '"', '(': ')', '[': ']', '{': '}', '<': '>' };
-        
+        const PUNCT_AFTER = /^[.,!?;:)\]}'">]/;
+        const WORD_OR_CLOSE = /[\w)\]}'">]$/;
+
         if (ctx.isForm) {
             const el = ctx.element;
             let start = el.selectionStart;
             let end = el.selectionEnd;
             let finalText = text;
             let targetCursorPos = null;
-            
+
             // Smart Indentation
             if (options.smartIndent && options.startLineText !== undefined) {
                 const indentationMatch = options.startLineText.match(/^\s*/);
@@ -207,10 +218,10 @@
                     finalText = finalText.replace(/\n/g, '\n' + indentationMatch[0]);
                 }
             }
-            
+
             const val = el.value || '';
-            const charBefore = start > 0 ? val[start - 1] : '';
-            const charAfter = end < val.length ? val[end] : '';
+            let charBefore = start > 0 ? val[start - 1] : '';
+            let charAfter = end < val.length ? val[end] : '';
 
             // Handle Wrapping
             if (WRAP_PAIRS[text] && Math.abs(end - start) > 0) {
@@ -221,59 +232,95 @@
                     targetCursorPos = start + match[1].length + 1 + match[2].length + 1;
                 }
             } else {
-                // 1. Cleanup orphaned spaces on delete/cut (empty insert)
-                if (!finalText && charBefore === ' ' && charAfter === ' ') {
-                    end += 1;
-                }
-                // 2. Ensure spacing around inserted text so words don't stick together
-                else if (finalText) {
-                    if (/\w$/.test(charBefore) && /^\w/.test(finalText)) finalText = ' ' + finalText;
-                    if (/\w$/.test(finalText) && /^\w/.test(charAfter)) finalText += ' ';
+                if (!finalText) {
+                    // DELETE: absorb stranded spaces
+                    if (charBefore === ' ' && (charAfter === ' ' || charAfter === '' || PUNCT_AFTER.test(charAfter))) {
+                        start -= 1;
+                        charBefore = start > 0 ? val[start - 1] : '';
+                        charAfter = end < val.length ? val[end] : '';
+                        if (charAfter === ' ' && end < val.length - 1 && PUNCT_AFTER.test(val[end + 1]))
+                            end += 1;
+                    } else if (charBefore === '' && charAfter === ' ') {
+                        end += 1;
+                    }
+                } else {
+                    // PASTE/INSERT: strip redundant whitespace from paste text first
+                    if (/^\s/.test(finalText) && /\s$/.test(charBefore))
+                        finalText = finalText.replace(/^\s+/, '');
+                    if (/\s$/.test(finalText) && (/^\s/.test(charAfter) || PUNCT_AFTER.test(charAfter) || charAfter === ''))
+                        finalText = finalText.replace(/\s+$/, '');
+                    // add spaces only where genuinely missing
+                    if (WORD_OR_CLOSE.test(charBefore) && /^\w/.test(finalText) && !/^\s/.test(finalText))
+                        finalText = ' ' + finalText;
+                    if (/\w$/.test(finalText) && /^\w/.test(charAfter) && !/\s$/.test(finalText) && !PUNCT_AFTER.test(charAfter))
+                        finalText += ' ';
+                    // appendSpace: re-add the space that triggered snippet expansion
+                    if (options.appendSpace && !/\s$/.test(finalText))
+                        finalText += ' ';
                 }
             }
 
-            // Ensure selection includes our shifted bounds for collisions
+            // Compute cursor once — lands after real content, never after a padding space
+            if (targetCursorPos === null) {
+                const trailingSpace = finalText.endsWith(' ') && !text.endsWith(' ') && !options.appendSpace;
+                const contentLength = finalText.length - (trailingSpace ? 1 : 0);
+                const preservedSpaceBefore = !text && charBefore === ' ' && /^\w/.test(charAfter);
+                targetCursorPos = preservedSpaceBefore ? start - 1 : start + contentLength;
+            }
+
+            // Ensure selection includes our shifted bounds
             if (start !== el.selectionStart || end !== el.selectionEnd) {
                 el.setSelectionRange(start, end);
             }
-            
+
             // Try execCommand first to preserve undo stack (Ctrl+Z)
             el.focus();
             const success = document.execCommand('insertText', false, finalText);
-            
+
             if (success) {
-                if (targetCursorPos !== null) {
-                    el.setSelectionRange(targetCursorPos, targetCursorPos);
-                } else if (select) {
+                if (select) {
                     el.setSelectionRange(start, start + finalText.length);
-                } else if ((!text.endsWith(' ') && finalText.endsWith(' ')) || (!text && charBefore === ' ' && val.substring(start, end).endsWith(' '))) {
-                    el.setSelectionRange(el.selectionEnd - 1, el.selectionEnd - 1);
+                } else {
+                    el.setSelectionRange(targetCursorPos, targetCursorPos);
                 }
             } else {
                 // Fallback if execCommand fails
                 el.setRangeText(finalText, start, el.selectionEnd, select ? 'select' : 'end');
-                if (targetCursorPos !== null) {
+                if (!select) {
                     el.setSelectionRange(targetCursorPos, targetCursorPos);
-                } else if (!select && ((!text.endsWith(' ') && finalText.endsWith(' ')) || (!text && charBefore === ' ' && val.substring(start, end).endsWith(' ')))) {
-                    el.setSelectionRange(el.selectionEnd - 1, el.selectionEnd - 1);
                 }
                 el.dispatchEvent(new Event('input', { bubbles: true }));
             }
+
         } else if (ctx.isEditable) {
             let finalText = text;
             const sel = window.getSelection();
-            let targetCursorOffset = null;
-            
+
             if (WRAP_PAIRS[text] && sel && !sel.isCollapsed) {
                 const selText = sel.toString();
                 const match = selText.match(/^(\s*)(.*?)(\s*)$/s);
                 if (match) {
                     finalText = match[1] + text + match[2] + WRAP_PAIRS[text] + match[3];
                 }
+            } else if (finalText) {
+                // Mirror spacing logic for contentEditable
+                const range = sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+                if (range) {
+                    const charBefore = range.startContainer.textContent?.[range.startOffset - 1] || '';
+                    const charAfter = range.endContainer.textContent?.[range.endOffset] || '';
+                    if (/^\s/.test(finalText) && /\s$/.test(charBefore))
+                        finalText = finalText.replace(/^\s+/, '');
+                    if (/\s$/.test(finalText) && (/^\s/.test(charAfter) || PUNCT_AFTER.test(charAfter) || charAfter === ''))
+                        finalText = finalText.replace(/\s+$/, '');
+                    if (WORD_OR_CLOSE.test(charBefore) && /^\w/.test(finalText) && !/^\s/.test(finalText))
+                        finalText = ' ' + finalText;
+                    if (/\w$/.test(finalText) && /^\w/.test(charAfter) && !/\s$/.test(finalText) && !PUNCT_AFTER.test(charAfter))
+                        finalText += ' ';
+                }
             }
-            
-            document.execCommand('insertText', false, finalText); 
-            
+
+            document.execCommand('insertText', false, finalText);
+
             if (select) {
                 if (sel.rangeCount > 0) {
                     const range = sel.getRangeAt(0);
@@ -282,7 +329,6 @@
             }
         }
     }
-
     function handleExpand() {
         const sel = window.getSelection();
         if (!sel.rangeCount) return;
@@ -452,8 +498,8 @@
     function performSnap(enabled) {
         if (!enabled) return;
         const activeEl = document.activeElement;
-        const isForm = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-    
+        const { isForm } = isEditableElement(activeEl);
+
         if (isForm) snapInput(activeEl);
         else snapDom();
     }
@@ -603,6 +649,7 @@
         performSnap,
         getPointFromCoords,
         setSafeRange,
-        extendSelectionByWord
+        extendSelectionByWord,
+        isEditableElement
     };
 })();

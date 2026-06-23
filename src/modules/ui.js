@@ -415,10 +415,20 @@
                 rect = { left: elRect.left + elRect.width/2, top: elRect.top + elRect.height/2, width:0, height:0, right: elRect.left + elRect.width/2, bottom: elRect.top + elRect.height/2 };
             }
         } else {
-            const sel = window.getSelection();
-            if (!sel.rangeCount) return destroy();
-            rect = sel.getRangeAt(0).getBoundingClientRect();
-        }
+                    const sel = window.getSelection() ||
+                        (document.activeElement?.shadowRoot?.getSelection?.());
+                    if (!sel || !sel.rangeCount) return destroy();
+                    rect = sel.getRangeAt(0).getBoundingClientRect();
+                    // shadow DOM contentEditables (Gemini etc) return a zeroed rect
+                    // fall back to mouse position which is always captured on mouseup
+                    if (!rect || (rect.top === 0 && rect.left === 0 && rect.width === 0)) {
+                        if (ctx.mouseX !== undefined && ctx.mouseY !== undefined) {
+                            rect = { left: ctx.mouseX, top: ctx.mouseY, right: ctx.mouseX, bottom: ctx.mouseY, width: 0, height: 0 };
+                        } else {
+                            return destroy();
+                        }
+                    }
+                }
 
         if (!rect || typeof rect.top !== 'number') return destroy();
         

@@ -136,9 +136,7 @@
 
                 // Case B: Caret only (No text selected).
                 // Rule: Only show on FIRST click (Focus). Subsequent clicks (Edit/Move Cursor) hide it.
-                if (rawCtx.element === this.lastFocusedInput) {
-                    // User clicked the SAME input again. They want to type/edit.
-                    // HIDE IT.
+                if (rawCtx.element === this.lastFocusedInput && !rawCtx.isEmptyInput) {
                     this.mode = 'HIDDEN';
                     this.activeActions = [];
                     global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (Re-focus)');
