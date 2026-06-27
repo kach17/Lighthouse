@@ -4,7 +4,7 @@
   popup.css inherits these tokens via the injected <style> tag.
 */
 
-:root, :host {
+:host {
     --so-bg: rgba(17, 24, 39, 0.95);
     --so-border: rgba(55, 65, 81, 0.5);
     --so-text-color: #e5e7eb;
@@ -22,7 +22,7 @@
     --so-z-tooltip: 100;
     --so-z-popover: 200;
     --so-z-toast: 300;
-    --so-z-handle: 400;
+    --so-z-handle: 150;
 
     --so-radius: 12px;
     --so-border-width: 1px;
@@ -55,9 +55,7 @@
 .marker-highlight-delete-floating { position: absolute; z-index: 2147483647 !important; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-family: var(--so-font-family); font-size: 14px; line-height: 1; background-color: var(--so-bg); color: var(--so-text-sub); border: 1px solid var(--so-border); box-shadow: 0 2px 5px rgba(0,0,0,0.15); cursor: pointer; user-select: none; transition: all 0.15s ease; backdrop-filter: blur(4px); }
 .marker-highlight-delete-floating:hover { background-color: var(--so-hover-bg); color: var(--so-text-color); border-color: var(--so-text-sub); transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.25); }
 
-/* Main Tooltip
-   Entrance: scaleX from center so it feels grounded to the selection,
-   combined with a short vertical lift. Spring easing gives it snap. */
+/* Main Tooltip */
 #lighthouse-extension-tooltip {
   position: fixed; display: flex; align-items: center; gap: var(--so-spacing); padding: var(--so-padding);
   border-radius: var(--so-radius); transform-origin: center bottom;
@@ -86,7 +84,7 @@
 #lighthouse-extension-tooltip.mode-top .lighthouse-separator:nth-child(2),
 #lighthouse-extension-tooltip.mode-bottom .lighthouse-separator:nth-child(2) { display: none !important; }
 
-/* Preview — not italic, slightly brighter so it reads as useful info not decoration */
+/* Preview */
 .lighthouse-preview { color: var(--so-text-color); opacity: 0.65; font-size: calc(var(--so-font-size) - 2px); font-family: var(--so-font-family); white-space: nowrap; max-width: var(--so-preview-width); overflow: hidden; text-overflow: ellipsis; align-items: center; gap: 6px; display: flex; position: relative; mask-image: linear-gradient(to right, transparent 0px, black 12px, black calc(100% - 12px), transparent 100%); -webkit-mask-image: linear-gradient(to right, transparent 0px, black 12px, black calc(100% - 12px), transparent 100%); }
 .lighthouse-preview:hover { opacity: 0.9; }
 .lighthouse-scroll-text { display: inline-block; vertical-align: middle; transition: color 0.2s; }
@@ -104,22 +102,26 @@
 .lighthouse-chip { display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600; background: var(--so-hover-bg); color: var(--so-text-sub); border: 1px solid var(--so-border); white-space: nowrap; }
 .lighthouse-chip.accent { background: var(--so-accent); color: var(--so-accent-text); border-color: var(--so-accent); }
 
-/* Popover */
+/* Popover — position: fixed set by JS, start offscreen until positioned */
 .lighthouse-popover {
-  position: absolute; background-color: var(--so-bg); border: var(--so-border-width) solid var(--so-border);
+  position: fixed; top: -9999px; left: -9999px;
+  background-color: var(--so-bg); border: var(--so-border-width) solid var(--so-border);
   backdrop-filter: blur(var(--so-backdrop-blur)); -webkit-backdrop-filter: blur(var(--so-backdrop-blur));
   border-radius: var(--so-radius); padding: var(--so-padding); gap: var(--so-spacing); box-shadow: var(--so-shadow);
   opacity: 0; transition: opacity 0.2s ease-out, transform 0.2s ease-out; pointer-events: none;
-  z-index: var(--so-z-popover); bottom: 100%; left: 50%; transform: translateX(-50%) translateY(5px);
+  z-index: var(--so-z-popover); transform: translateY(5px);
   margin-bottom: 10px; min-width: 60px; width: max-content; display: flex; align-items: center; justify-content: center;
 }
 .lighthouse-popover::before { content: ''; position: absolute; top: 100%; left: 0; right: 0; height: 20px; background: transparent; z-index: -1; }
-.lighthouse-popover.visible { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.lighthouse-popover.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
+/* Popover caret — default points down (popover above button) */
 .lighthouse-popover::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border-width: 6px; border-style: solid; border-color: var(--so-bg) transparent transparent transparent; margin-top: -1px; z-index: 2; }
-#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover { bottom: auto; top: 100%; margin-bottom: 0; margin-top: 10px; transform: translateX(-50%) translateY(-5px); }
-#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover.visible, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover.visible { transform: translateX(-50%) translateY(0); }
-#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover::after, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover::after { top: auto; bottom: 100%; border-color: transparent transparent var(--so-bg) transparent; margin-top: 0; margin-bottom: -1px; }
-#lighthouse-extension-tooltip.mode-bottom .lighthouse-popover::before, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-popover::before { top: auto; bottom: 100%; height: 20px; }
+
+/* Popover caret — flipped when popover is below button */
+.lighthouse-popover.mode-bottom::after { top: auto; bottom: 100%; border-color: transparent transparent var(--so-bg) transparent; margin-top: 0; margin-bottom: -1px; }
+.lighthouse-popover.mode-bottom::before { top: auto; bottom: 100%; height: 20px; }
+
 .lighthouse-popover .lighthouse-preview { max-width: 500px; --so-preview-width: 500px; display: flex !important; }
 .lighthouse-popover img.qr-code { display: block; background: white; padding: 4px; border-radius: 4px; width: 100px; height: 100px; }
 
@@ -133,7 +135,7 @@
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* Buttons — hover is background-color only, no stacked filter/opacity */
+/* Buttons */
 .lighthouse-btn, .lighthouse-paste-btn { position: relative; display: flex; align-items: center; justify-content: center; border-radius: var(--so-radius); border: none; background: transparent; color: var(--so-text-color); cursor: pointer; transition: background-color 0.15s, transform 0.1s; padding: 0; }
 .lighthouse-btn:hover, .lighthouse-paste-btn:hover { background-color: var(--so-hover-bg); color: var(--so-hover-text); filter: none; opacity: 1; }
 .lighthouse-btn:active, .lighthouse-paste-btn:active { transform: scale(0.88); }
@@ -145,6 +147,7 @@
 .lighthouse-label { position: absolute; bottom: calc(var(--so-btn-size) * -1 + 4px); left: 50%; transform: translateX(-50%); background-color: #000; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; opacity: 0; pointer-events: none; white-space: nowrap; transition: opacity 0.15s 0.3s; font-family: var(--so-font-family); font-weight: 500; z-index: 10; }
 .lighthouse-btn:hover > .lighthouse-label { opacity: 1; }
 .lighthouse-popover .lighthouse-label { bottom: -28px; z-index: 30; }
+.lighthouse-popover.mode-bottom .lighthouse-label { bottom: auto; top: -30px; }
 #lighthouse-extension-tooltip.mode-bottom .lighthouse-label, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-label { bottom: auto; top: -30px; }
 #lighthouse-extension-tooltip .lighthouse-btn:not(.text-only-btn):has(.lighthouse-popover) > .lighthouse-label { opacity: 0 !important; }
 
@@ -152,14 +155,15 @@
 #lighthouse-extension-tooltip.mode-top .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-bottom .lighthouse-btn.has-popover::after { bottom: 100%; }
 #lighthouse-extension-tooltip.mode-bottom .lighthouse-btn.has-popover::after, #lighthouse-extension-tooltip.mode-sticky-top .lighthouse-btn.has-popover::after { top: 100%; }
 
-/* Drag handles — line clears selection edge, circle centered on the stick. */
-.lighthouse-tooltip-draghandle { position: fixed; left: 0; top: 0; z-index: 99998; pointer-events: auto; opacity: 0; }
+/* Drag handles */
+.lighthouse-tooltip-draghandle { position: fixed; left: 0; top: 0; z-index: var(--so-z-handle); pointer-events: auto; opacity: 0; }
 .lighthouse-tooltip-draghandle-line { position: absolute; background: #333; border-radius: 4px; opacity: 0.7; transition: height 200ms ease; }
-.lighthouse-tooltip-draghandle-circle { position: relative; width: 12px; height: 12px; background: #333; border: 0.25px solid #555; border-radius: 50% !important; z-index: 99998; }
+.lighthouse-tooltip-draghandle-circle { position: relative; width: 12px; height: 12px; background: #333; border: 0.25px solid #555; border-radius: 50% !important; z-index: var(--so-z-handle); }
 .lighthouse-tooltip-draghandle-circle.draghandle-triangle { border-radius: 4px !important; transform: translate(-50%) rotate(45deg); }
 .lighthouse-tooltip-draghandle-circle.draghandle-square { border-radius: 1.5px !important; }
 .lighthouse-tooltip-draghandle-circle.draghandle-rhombus { border-radius: 1.5px !important; transform: rotate(45deg); }
-/* Text-only secondary buttons (e.g. spellcheck suggestions, snippet completions) */
+
+/* Text-only secondary buttons */
 #lighthouse-extension-tooltip .text-only-btn { width: auto; padding: 4px 10px; border-radius: var(--so-radius); }
 #lighthouse-extension-tooltip .text-only-btn .lighthouse-label { display: block; position: static; opacity: 1; transform: none; background: transparent; box-shadow: none; color: var(--so-text-color); font-size: 13px; padding: 0; transition: none; pointer-events: none; z-index: auto; bottom: auto; top: auto; left: auto; }
 #lighthouse-extension-tooltip .text-only-btn:hover .lighthouse-label { opacity: 1; color: var(--so-hover-text); background: transparent; }
