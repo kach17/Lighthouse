@@ -108,6 +108,7 @@
         }
 
         tooltipContainer.innerHTML = ''; 
+        shadowRoot.querySelector('.' + POPOVER_CLASS + '.lighthouse-static-popover')?.remove();
 
         // 2. Render Header
         if (State.mode === 'LINK') {
@@ -141,8 +142,12 @@
                         attrs: { role: 'button', tabindex: '0' },
                         children: [ $.createSmartIcon('more') ]
                     });
-                    moreBtn.appendChild(moreMenu);
-                    
+                    // Append to shadow root (not moreBtn) so the popover isn't nested inside
+                    // #lighthouse-extension-tooltip, which has a CSS `transform`. A transformed
+                    // ancestor creates a new containing block for `position: fixed` children,
+                    // which breaks the viewport-relative math in calculatePosition().
+                    shadowRoot.appendChild(moreMenu);
+
                     const showMore = () => {
                         clearTimeout(moreTimeout);
                         moreMenu.classList.add('visible');
@@ -314,7 +319,7 @@
             }
         }
 
-        if (def.id === 'paste' && window.LighthouseState?.settings?.pastePreview) {
+        if (def.id === 'paste') {
             tools.readClipboard().then(text => {
                 if (text && text.trim().length > 0) {
                     const clean = text.replace(/\n/g, ' ').trim();
@@ -515,6 +520,7 @@
         clearTimeout(hoverTimeout);
         clearTimeout(moreTimeout);
         removePopover(false);
+        shadowRoot?.querySelector('.' + POPOVER_CLASS + '.lighthouse-static-popover')?.remove();
         destroyCallbacks.forEach(cb => cb());
         if (tooltipContainer && tooltipContainer.classList.contains('visible')) {
             $.logEvent('UI', 'DESTROY', 'Tooltip Hidden');

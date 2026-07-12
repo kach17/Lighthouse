@@ -1,4 +1,3 @@
-
 /**
  * Lighthouse - Main Controller
  */
@@ -36,6 +35,18 @@
                 case 'mouseup':
                     handleInteraction(e);
                     break;
+                case 'paste': {
+                    // contentEditable keeps native rich paste (formatting is worth preserving there);
+                    // plain <input>/<textarea> has nothing to lose, so route it through insertText
+                    // to get the same spacing/punctuation correction the toolbar's Paste button gets.
+                    const { isForm: pasteIsForm } = window.LighthouseSelection.isEditableElement(e.target);
+                    if (!pasteIsForm) return;
+                    const text = (e.clipboardData || window.clipboardData)?.getData('text/plain');
+                    if (!text) return;
+                    e.preventDefault();
+                    window.LighthouseSelection.insertText({ isForm: true, element: e.target }, text.trim());
+                    break;
+                }
                 case 'keyup':
                     if (e.key === 'Shift' || e.key.startsWith('Arrow')) handleInteraction(e);
                     break;
@@ -86,8 +97,11 @@
                                     }
                                 }
                             }
-                        } else if ((e.key === 'Backspace' || e.key === 'Delete') && !e.metaKey && !e.ctrlKey) {
-                            // intercept only when there is a selection — let normal single-char delete pass through
+                        } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                            // Intercept only when there is a selection — a collapsed cursor (plain
+                            // single-char delete, or Ctrl+Backspace/Delete word-delete) passes through
+                            // untouched. With a selection, Ctrl doesn't change what gets removed — it's
+                            // still just the selected range — so no need to special-case the modifier.
                             if (isForm && activeEl.selectionStart !== activeEl.selectionEnd) {
                                 e.preventDefault();
                                 window.LighthouseSelection.insertText({ isForm: true, element: activeEl }, '');
@@ -177,6 +191,7 @@
         $.EventManager.add(document, 'keyup', globalEventHandler);
         $.EventManager.add(document, 'keydown', globalEventHandler);
         $.EventManager.add(document, 'input', globalEventHandler, true);
+        $.EventManager.add(document, 'paste', globalEventHandler, true);
         $.EventManager.add(document, 'mouseover', globalEventHandler);
         $.EventManager.add(document, 'mouseout', globalEventHandler);
         $.EventManager.add(document, 'dragstart', globalEventHandler);
@@ -261,11 +276,8 @@
             const sel = window.getSelection();
             if (!sel || !sel.rangeCount) return;
             const range = sel.getRangeAt(0);
-            const preRange = document.createRange();
-            preRange.selectNodeContents(el);
-            preRange.setEnd(range.startContainer, range.startOffset);
-            cursor = preRange.toString().length;
-            val = el.innerText;
+            cursor = window.LighthouseSelection.getPlainTextOffset(el, range.startContainer, range.startOffset);
+            val = window.LighthouseSelection.getPlainText(el);
         } else {
             val = el.value;
             cursor = el.selectionEnd;
@@ -275,29 +287,12 @@
         const setRange = (start, end) => {
             if (el.isContentEditable) {
                 const sel = window.getSelection();
-                const range = document.createRange();
-                let charCount = 0;
-                let startNode = null, startOffset = 0, endNode = null, endOffset = 0;
-                const walk = (node) => {
-                    if (node.nodeType === 3) {
-                        const len = node.textContent.length;
-                        if (!startNode && charCount + len >= start) {
-                            startNode = node;
-                            startOffset = start - charCount;
-                        }
-                        if (!endNode && charCount + len >= end) {
-                            endNode = node;
-                            endOffset = end - charCount;
-                        }
-                        charCount += len;
-                    } else {
-                        node.childNodes.forEach(walk);
-                    }
-                };
-                walk(el);
-                if (startNode && endNode) {
-                    range.setStart(startNode, startOffset);
-                    range.setEnd(endNode, endOffset);
+                const startPos = window.LighthouseSelection.getPositionAtOffset(el, start);
+                const endPos = window.LighthouseSelection.getPositionAtOffset(el, end);
+                if (startPos && endPos) {
+                    const range = document.createRange();
+                    range.setStart(startPos.node, startPos.offset);
+                    range.setEnd(endPos.node, endPos.offset);
                     sel.removeAllRanges();
                     sel.addRange(range);
                 }

@@ -198,11 +198,27 @@
         return navigator.language || 'en';
     }
 
+    const WRAP_PAIRS = { "'": "'", '"': '"', '(': ')', '[': ']', '{': '}', '<': '>' };
+    const PUNCT_AFTER = /^[.,!?;:)\]}'">]/;
+    // word chars/closing brackets (original scope) + sentence punctuation — "Hello,world"
+    // is as wrong as "Helloworld", so a following word needs a space either way.
+    const SPACE_NEEDED_AFTER = /[\w)\]}'">.,!?;:]$/;
+    // Exact repeats only — never merges distinct marks like '?'+'!'. No brackets/quotes
+    // (owned by WRAP_PAIRS/snapping) or dashes (people repeat those on purpose).
+    const DUPLICATE_PUNCT = /^[.,!?;:]$/;
+
+    // Shared by both the <input>/<textarea> and contentEditable branches: strips
+    // redundant whitespace at the edges, adds a space only where genuinely missing.
+    function normalizeEdges(finalText, charBefore, charAfter) {
+        if (/^\s/.test(finalText) && /\s$/.test(charBefore)) finalText = finalText.replace(/^\s+/, '');
+        if (/\s$/.test(finalText) && (/^\s/.test(charAfter) || PUNCT_AFTER.test(charAfter) || charAfter === '')) finalText = finalText.replace(/\s+$/, '');
+        if (SPACE_NEEDED_AFTER.test(charBefore) && /^\w/.test(finalText) && !/^\s/.test(finalText)) finalText = ' ' + finalText;
+        if (SPACE_NEEDED_AFTER.test(finalText) && /^\w/.test(charAfter) && !/\s$/.test(finalText) && !PUNCT_AFTER.test(charAfter)) finalText += ' ';
+        return finalText;
+    }
+
     function insertText(ctx, text, options = {}) {
         const select = options.select !== undefined ? options.select : false;
-        const WRAP_PAIRS = { "'": "'", '"': '"', '(': ')', '[': ']', '{': '}', '<': '>' };
-        const PUNCT_AFTER = /^[.,!?;:)\]}'">]/;
-        const WORD_OR_CLOSE = /[\w)\]}'">]$/;
 
         if (ctx.isForm) {
             const el = ctx.element;
@@ -243,17 +259,18 @@
                     } else if (charBefore === '' && charAfter === ' ') {
                         end += 1;
                     }
+                    // DELETE: absorb a stranded duplicate mark (e.g. removing ", however"
+                    // out of "the cat, however, sat" would otherwise leave ", ,")
+                    if (DUPLICATE_PUNCT.test(charBefore) && charBefore === charAfter) {
+                        end += 1;
+                    }
                 } else {
-                    // PASTE/INSERT: strip redundant whitespace from paste text first
-                    if (/^\s/.test(finalText) && /\s$/.test(charBefore))
-                        finalText = finalText.replace(/^\s+/, '');
-                    if (/\s$/.test(finalText) && (/^\s/.test(charAfter) || PUNCT_AFTER.test(charAfter) || charAfter === ''))
-                        finalText = finalText.replace(/\s+$/, '');
-                    // add spaces only where genuinely missing
-                    if (WORD_OR_CLOSE.test(charBefore) && /^\w/.test(finalText) && !/^\s/.test(finalText))
-                        finalText = ' ' + finalText;
-                    if (/\w$/.test(finalText) && /^\w/.test(charAfter) && !/\s$/.test(finalText) && !PUNCT_AFTER.test(charAfter))
-                        finalText += ' ';
+                    finalText = normalizeEdges(finalText, charBefore, charAfter);
+                    // collapse an exact duplicate mark by consuming the existing neighbor
+                    if (finalText && DUPLICATE_PUNCT.test(charAfter) && finalText.slice(-1) === charAfter)
+                        end += 1;
+                    if (finalText && DUPLICATE_PUNCT.test(charBefore) && finalText[0] === charBefore)
+                        start -= 1;
                     // appendSpace: re-add the space that triggered snippet expansion
                     if (options.appendSpace && !/\s$/.test(finalText))
                         finalText += ' ';
@@ -303,19 +320,17 @@
                     finalText = match[1] + text + match[2] + WRAP_PAIRS[text] + match[3];
                 }
             } else if (finalText) {
-                // Mirror spacing logic for contentEditable
                 const range = sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
                 if (range) {
                     const charBefore = range.startContainer.textContent?.[range.startOffset - 1] || '';
                     const charAfter = range.endContainer.textContent?.[range.endOffset] || '';
-                    if (/^\s/.test(finalText) && /\s$/.test(charBefore))
-                        finalText = finalText.replace(/^\s+/, '');
-                    if (/\s$/.test(finalText) && (/^\s/.test(charAfter) || PUNCT_AFTER.test(charAfter) || charAfter === ''))
-                        finalText = finalText.replace(/\s+$/, '');
-                    if (WORD_OR_CLOSE.test(charBefore) && /^\w/.test(finalText) && !/^\s/.test(finalText))
-                        finalText = ' ' + finalText;
-                    if (/\w$/.test(finalText) && /^\w/.test(charAfter) && !/\s$/.test(finalText) && !PUNCT_AFTER.test(charAfter))
-                        finalText += ' ';
+                    finalText = normalizeEdges(finalText, charBefore, charAfter);
+                    // Collapse a duplicate mark by trimming our own edge instead of consuming the
+                    // neighbor (no simple integer offsets to shift across a text-node boundary here).
+                    if (finalText && DUPLICATE_PUNCT.test(charAfter) && finalText.slice(-1) === charAfter)
+                        finalText = finalText.slice(0, -1);
+                    if (finalText && DUPLICATE_PUNCT.test(charBefore) && finalText[0] === charBefore)
+                        finalText = finalText.slice(1);
                 }
             }
 
@@ -639,6 +654,42 @@
         }
     }
 
+    /**
+     * Shared source of truth for translating between a contentEditable's plain-text
+     * character count and an actual DOM (node, offset) position. Anything that needs
+     * to reason about "the Nth character of this rich text box" should go through these
+     * three, rather than writing its own conversion — that's how a cursor position and
+     * its surrounding text ended up measured against two different rulers before.
+     */
+    function getPlainText(root) {
+        const r = document.createRange();
+        r.selectNodeContents(root);
+        return r.toString();
+    }
+
+    function getPlainTextOffset(root, node, offset) {
+        const r = document.createRange();
+        r.selectNodeContents(root);
+        r.setEnd(node, offset);
+        return r.toString().length;
+    }
+
+    function getPositionAtOffset(root, targetOffset) {
+        let charCount = 0, result = null;
+        const walk = (node) => {
+            if (result) return;
+            if (node.nodeType === 3) {
+                const len = node.textContent.length;
+                if (charCount + len >= targetOffset) result = { node, offset: targetOffset - charCount };
+                charCount += len;
+            } else {
+                for (const child of node.childNodes) { walk(child); if (result) return; }
+            }
+        };
+        walk(root);
+        return result;
+    }
+
     window.LighthouseSelection = {
         getContext,
         getActiveSelection,
@@ -650,6 +701,9 @@
         getPointFromCoords,
         setSafeRange,
         extendSelectionByWord,
-        isEditableElement
+        isEditableElement,
+        getPlainText,
+        getPlainTextOffset,
+        getPositionAtOffset
     };
 })();
