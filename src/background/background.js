@@ -66,7 +66,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const actions = {
         'GET_RATE': () => handleGetRate(request.base, request.target, sendResponse),
         'TRANSLATE': () => handleTranslate(request.text, request.targetLang, sendResponse),
-        'DEFINE': () => handleDefine(request.text, request.targetLang, sendResponse),
+        'DEFINE': () => handleDefine(request.text, request.detectedLang, request.targetLang, sendResponse),
         'SPELLCHECK': () => handleSpellcheck(request.text, sendResponse),
         'FETCH_RAW': () => _fetch(request.url, request.options || {}, sendResponse)
     };
@@ -128,21 +128,32 @@ async function handleTranslate(text, targetLang = 'en', sendResponse) {
     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
     _fetch(url, {}, sendResponse, (raw) => {
         const data = JSON.parse(raw);
-        return data?.[0]?.map(part => part[0]).join('') || 'Translation failed';
+        return {
+            text: data?.[0]?.map(part => part[0]).join('') || '',
+            sourceLang: data?.[2] || null // Google returns the detected source lang here
+        };
     });
 }
 
-async function handleDefine(text, targetLang = 'en', sendResponse) {
-    const lang = targetLang.split('-')[0];
-    const getUrl = (l) => `https://${l}.wikipedia.org/w/api.php?action=query&exsectionformat=plain&prop=extracts&origin=*&exchars=300&exlimit=1&explaintext=0&formatversion=2&format=json&titles=${encodeURIComponent(text.replace(/ /g, '_'))}`;
-    
-    _fetch(getUrl(lang), {}, (res) => {
-        const data = res.success ? JSON.parse(res.result) : null;
-        const extract = data?.query?.pages?.[0]?.extract;
-        if (extract) sendResponse({ success: true, result: extract });
-        else if (lang !== 'en') handleDefine(text, 'en', sendResponse); // Fallback
-        else sendResponse({ success: false, error: 'No definition found' });
-    });
+async function handleDefine(text, detectedLang, targetLang, sendResponse) {
+    const candidates = [...new Set([detectedLang, targetLang, 'en'].filter(Boolean))]
+        .map(l => l.split('-')[0]);
+
+    for (const lang of candidates) {
+        try {
+            const url = `https://${lang}.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(text)}`;
+            const res = await fetch(url);
+            if (!res.ok) continue;
+            const data = await res.json();
+            const def = data[lang]?.[0]?.definitions?.[0]?.definition;
+            if (def) {
+                return sendResponse({ success: true, result: def.replace(/<[^>]+>/g, '') });
+            }
+        } catch (e) {
+            // try next candidate in the chain
+        }
+    }
+    sendResponse({ success: false, error: 'No definition found' });
 }
 
 async function handleSpellcheck(text, sendResponse) {

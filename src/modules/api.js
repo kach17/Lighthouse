@@ -125,10 +125,11 @@
             translate: (text) => {
                 const s = window.LighthouseState?.settings?.standards;
                 return asyncQuery('TRANSLATE', { text, targetLang: s ? s.language : 'en' }, 'result', null);
+                // result shape: { text, sourceLang }
             },
-            define: (text) => {
+            define: (text, detectedLang) => {
                 const s = window.LighthouseState?.settings?.standards;
-                return asyncQuery('DEFINE', { text, targetLang: s ? s.language : 'en' }, 'result', null);
+                return asyncQuery('DEFINE', { text, detectedLang, targetLang: s ? s.language : 'en' }, 'result', null);
             },
             spellcheck: (text) => asyncQuery('SPELLCHECK', { text }, 'result', []),
             fetchRaw: (url, options = {}) => asyncQuery('FETCH_RAW', { url, options }, 'result', null),

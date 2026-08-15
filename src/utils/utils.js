@@ -208,39 +208,18 @@
         return tags;
     },
 
-    detectTextLanguage: (text) => {
-        const cleanText = text.replace(/[^\p{L}]/gu, '').toLowerCase();
-        if (/[\u0400-\u04FF]/.test(cleanText)) return 'ru';
-        if (/[äöüß]/.test(cleanText)) return 'de';
-        if (/[àâäéèêëïîôöùûüÿç]/.test(cleanText)) return 'fr';
-        if (/[ñáéíóúü]/.test(cleanText)) return 'es';
-        if (/[àèéìíîòóù]/.test(cleanText)) return 'it';
-        if (/[àáâãçéêíóôõú]/.test(cleanText)) return 'pt';
-        if (/[\u4e00-\u9fff]/.test(cleanText)) return 'zh';
-        if (/[\u3040-\u309f\u30a0-\u30ff]/.test(cleanText)) return 'ja';
-        if (/[\uac00-\ud7af]/.test(cleanText)) return 'ko';
-        if (/[\u0600-\u06ff]/.test(cleanText)) return 'ar';
-        return 'en';
-    },
-
-    isForeign: (ctx) => {
-        const SelLib = window.LighthouseSelection;
-        if (!SelLib) return false;
-
-        const sourceLang = SelLib.getLanguage ? SelLib.getLanguage(ctx) : 'en';
-        const settings = (window.LighthouseState && window.LighthouseState.settings)
-            ? window.LighthouseState.settings
-            : (window.LighthouseConfig ? window.LighthouseConfig.defaults : {});
-        const targetLang = settings.standards?.language || 'en';
-
-        const src = (sourceLang || 'en').split('-')[0].toLowerCase();
-        const tgt = (targetLang || 'en').split('-')[0].toLowerCase();
-
-        if (src === tgt) {
-            const textLang = window.LighthouseUtils.detectTextLanguage(ctx.text);
-            return textLang !== tgt;
+    detectLanguage: (text) => {
+      return new Promise((resolve) => {
+        const clean = (text || '').trim();
+        if (clean.length < 2 || !(typeof chrome !== 'undefined' && chrome.i18n && chrome.i18n.detectLanguage)) {
+          return resolve(null);
         }
-        return src !== tgt;
+        chrome.i18n.detectLanguage(clean, (result) => {
+          const best = (result && result.languages || [])
+            .slice().sort((a, b) => b.percentage - a.percentage)[0];
+          resolve((result && result.isReliable && best) ? best.language : null);
+        });
+      });
     },
 
     logEvent: (component, event, details = '') => {

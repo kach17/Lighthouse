@@ -298,16 +298,21 @@
             label: 'Translate',
             category: 'selection',
             icon: 'translate',
-            condition: (ctx) => ctx.hasText && !ctx.isLink && /\p{L}/u.test(ctx.text) && Utils.isForeign(ctx),
+            condition: (ctx) => ctx.hasText && !ctx.isLink && /\p{L}/u.test(ctx.text),
             execute: (ctx) => {
                 const tl = getStandards().language || 'en';
                 window.open(buildUrl(`https://translate.google.com/?sl=auto&tl=${tl}&text=%s&op=translate`, ctx.text), '_blank');
                 return { success: true };
             },
             preview: async (ctx, tools) => {
-                const res = await tools.translate(ctx.text);
-                if (!res) return { previewText: 'Translation unavailable' };
-                return makeTextPreview(res, tools);
+                const res = await tools.translate(ctx.text); // { text, sourceLang }
+                if (!res || !res.text) return { previewText: 'Translation unavailable' };
+
+                const targetLang = (getStandards().language || 'en').split('-')[0];
+                if (res.sourceLang === targetLang) {
+                    return { previewText: 'Already in your language' };
+                }
+                return makeTextPreview(res.text, tools);
             }
         },
         {
@@ -315,13 +320,14 @@
             label: 'Define',
             category: 'selection',
             icon: 'dictionary',
-            condition: (ctx) => ctx.hasText && ctx.wordCount === 1 && /\p{L}/u.test(ctx.text) && !Utils.isForeign(ctx),
+            condition: (ctx) => ctx.hasText && ctx.wordCount === 1 && /\p{L}/u.test(ctx.text),
             execute: (ctx) => {
                 window.open(buildUrl('https://www.google.com/search?q=define+%s', ctx.text), '_blank');
                 return { success: true };
             },
             preview: async (ctx, tools) => {
-                const res = await tools.define(ctx.text);
+                const detectedLang = await Utils.detectLanguage(ctx.text);
+                const res = await tools.define(ctx.text, detectedLang);
                 if (!res) return { previewText: 'Definition unavailable' };
                 return makeTextPreview(res, tools);
             }
@@ -517,8 +523,7 @@
             label: 'Spell',
             category: 'input',
             icon: 'spellcheck',
-            condition: (ctx) => ctx.isInput && ctx.hasText && ctx.wordCount === 1 && /\p{L}/u.test(ctx.text) && !Utils.isForeign(ctx),
-            execute: (ctx) => {
+            condition: (ctx) => ctx.hasText && ctx.wordCount === 1 && /^[a-zA-Z' -]+$/.test(ctx.text), execute: (ctx) => {
                 return { success: true, message: 'Hover for suggestions' };
             },
             preview: async (ctx, tools) => {
