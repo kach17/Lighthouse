@@ -1,0 +1,141 @@
+/*
+  Lighthouse - Design Tokens
+  Loaded by the tooltip (shadow DOM), the page (markers) and the popup.
+
+  Only the INPUTS below are meant to be customized. Every color after them is
+  derived from --so-base, so any surface color produces a working theme:
+  ink is picked for contrast, each level steps the surface toward its ink
+  (with larger steps on darker surfaces), and edges, highlights, shadows and
+  image dimming scale with the surface's lightness.
+*/
+
+:host, :root {
+    /* ---------- INPUTS: color ---------- */
+    --so-base: #F7F6F3;          /* the bar's surface; everything is derived from it */
+    --so-hue: 75;                /* tint of ink and tones (oklch hue); match your base's hue for colored themes */
+    --so-accent-hue: 250;        /* hue of the accent (toast, converted text) */
+    --so-mix: 6%;                /* how far each level mixes toward the ink */
+    --so-step-dark: 0.06;        /* extra lightness step per level on dark surfaces */
+    --so-hover-mix: 0.6;         /* hover as a fraction of one level step: clearly visible, still lighter than chosen */
+    --so-ink-on-light: 0.28;     /* lightness of text on light surfaces (0 = black) */
+    --so-ink-on-dark: 0.90;      /* lightness of text on dark surfaces (1 = white) */
+
+    /* ---------- INPUTS: type ---------- */
+    --so-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --so-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --so-font-size: 12.5px;
+    --so-font-weight: 500;
+
+    /* ---------- INPUTS: shape and size ---------- */
+    --so-bar-height: 32px;
+    --so-pad: 4px;               /* inset between a surface and its buttons */
+    --so-radius: 9px;            /* surface corner radius; buttons derive theirs from it */
+    --so-gap: 2px;               /* between buttons */
+    --so-btn-pad-x: 9px;
+    --so-icon-size: 14px;
+    --so-icon-stroke: 1.75;
+    --so-icon-gap: 6px;          /* between an icon and its label */
+    --so-label-delay: 350ms;     /* icon-only mode: how long before a hovered button shows its label */
+    --so-icon-only-button: 30px; /* icon-only mode: buttons are squares this size (the icon carries all the meaning) */
+    --so-icon-only-icon: 16px;
+    --so-group-gap: 6px;         /* extra space after the identity part (quote, link) */
+    --so-level-space: 6px;       /* visible space between a surface and a popover it opens */
+    --so-preview-width: 320px;
+    --so-card-width: 280px;
+    --so-card-pad: 5px;
+    --so-card-text-inset: 7px;
+    --so-qr-size: 132px;
+    --so-viewport-margin: 8px;
+    /* Spacing scale: paddings, margins and gaps use these steps */
+    --so-space-1: 2px;
+    --so-space-2: 4px;
+    --so-space-3: 6px;
+    --so-space-4: 8px;
+    --so-space-5: 10px;
+    --so-space-6: 12px;
+    --so-space-7: 16px;
+    --so-fade-width: 18px;       /* soft edge where long text fades out */
+    --so-row-height: 36px;       /* list and setting rows in the popup */
+    --so-control-height: 30px;   /* fields and tabs in the popup */
+    --so-control-width: 160px;   /* every control in a settings column has this width */
+
+    /* ---------- INPUTS: selection handles ----------
+       A small tab of the bar's material hanging just outside the selection edge,
+       with a hairline guide along the edge itself. */
+    --so-handle-width: 10px;
+    --so-handle-line-width: 1.5px;
+    --so-handle-line-color: var(--so-handle-dot-color); /* same as the grip dots */
+    --so-handle-dot: 2px;            /* grip dots inside the tab: contrast within the handle, independent of the page */
+    --so-handle-dot-gap: 4px;        /* distance between the two dots' centers */
+    --so-handle-dot-color: var(--so-ink-sub); /* a quiet grip texture, not a light source */
+    --so-handle-height: 15px;
+    --so-handle-radius: 4px;
+    --so-handle-gap: 1px;            /* space between the selected text and the tab */
+    --so-handle-hit: 24px;           /* grab area around the tab */
+
+    /* ---------- INPUTS: motion ---------- */
+    --so-duration: 200ms;        /* appearing */
+    --so-duration-out: 200ms;    /* disappearing: the old bar fades where it was while the new one rises */
+    --so-reveal-distance: 100%;
+    --lh-hl-yellow: #fff176; --lh-hl-green: #b9f6ca; --lh-hl-blue: #b3e5fc; --lh-hl-pink: #f8bbd0; --lh-hl-orange: #ffcc80;   /* highlight colors */
+    --so-popover-delay: 300ms;   /* hover before a popover opens */
+    --so-popover-close-delay: 150ms;
+    --so-bar-gap: 18px;          /* between the bar and the selection */  /* how far the bar travels as it rises out of the selection (of its own height) */
+    --so-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+    /* ---------- INPUTS: layering ---------- */
+    --so-z-tooltip: 100;
+    --so-z-popover: 200;
+    --so-z-toast: 300;
+    --so-z-handle: 90;           /* under the bar: handles belong to the text, the bar floats above it */
+
+    /* ================================================================
+       DERIVED - no need to edit anything below
+       ================================================================ */
+
+    /* Ink: near-black on light surfaces, near-white on dark ones */
+    --so-ink: oklch(from var(--so-base) clamp(var(--so-ink-on-light), calc((0.64 - l) * 100), var(--so-ink-on-dark)) 0.012 var(--so-hue));
+    --so-ink-sub: color-mix(in oklab, var(--so-ink) 64%, var(--so-base));
+
+    /* Tonal ladder. Mix toward ink, then add a lightness step that grows on dark surfaces.
+       The direction term is -1 on light surfaces (darken) and +1 on dark ones (lighten). */
+    --so-surface: var(--so-base);
+    --so-hover-0: oklch(from color-mix(in oklab, var(--so-base), var(--so-ink) calc(var(--so-mix) * var(--so-hover-mix))) calc(l + clamp(-1, calc((0.64 - l) * 1000), 1) * (1 - l) * var(--so-step-dark) * var(--so-hover-mix)) c h);
+    --so-tone-1:  oklch(from color-mix(in oklab, var(--so-base), var(--so-ink) var(--so-mix))              calc(l + clamp(-1, calc((0.64 - l) * 1000), 1) * (1 - l) * var(--so-step-dark))       c h);
+    --so-hover-1: oklch(from color-mix(in oklab, var(--so-base), var(--so-ink) calc(var(--so-mix) * (1 + var(--so-hover-mix)))) calc(l + clamp(-1, calc((0.64 - l) * 1000), 1) * (1 - l) * var(--so-step-dark) * (1 + var(--so-hover-mix))) c h);
+    --so-tone-2:  oklch(from color-mix(in oklab, var(--so-base), var(--so-ink) calc(var(--so-mix) * 2))   calc(l + clamp(-1, calc((0.64 - l) * 1000), 1) * (1 - l) * var(--so-step-dark) * 2)   c h);
+    --so-hover-2: oklch(from color-mix(in oklab, var(--so-base), var(--so-ink) calc(var(--so-mix) * (2 + var(--so-hover-mix)))) calc(l + clamp(-1, calc((0.64 - l) * 1000), 1) * (1 - l) * var(--so-step-dark) * (2 + var(--so-hover-mix))) c h);
+    --so-tone-3:  oklch(from color-mix(in oklab, var(--so-base), var(--so-ink) calc(var(--so-mix) * 3))   calc(l + clamp(-1, calc((0.64 - l) * 1000), 1) * (1 - l) * var(--so-step-dark) * 3)   c h);
+    --so-hover: var(--so-hover-0);
+
+    /* Edges and depth: stronger on dark surfaces, where shadows stop working */
+    --so-edge: oklch(from var(--so-ink) l c h / calc(0.12 + (l - 0.17) * 0.11));
+    --so-highlight: oklch(from var(--so-ink) l c h / calc((l - 0.17) * 0.09));
+    --so-hairline: oklch(from var(--so-ink) l c h / calc(0.09 + (l - 0.17) * 0.06));
+    /* Elevation: a hairline ring, a close key shadow and a soft ambient one, strong enough to
+       lift surfaces off any page (Notion / Fluent strength), and stronger on dark surfaces */
+    --so-shadow-contact: oklch(from var(--so-base) 0 0 0 / calc(0.10 + (1 - l) * 0.20));
+    --so-shadow-lift: oklch(from var(--so-base) 0 0 0 / calc(0.20 + (1 - l) * 0.25));
+    --so-shadow: inset 0 1px 0 var(--so-highlight), 0 0 0 1px var(--so-edge), 0 3px 6px var(--so-shadow-contact), 0 9px 24px var(--so-shadow-lift);
+    /* Small handles read by their edge, not by a scaled-down shadow: a firmer hairline and a
+       tight shadow that is proportionally stronger than the one large surfaces use */
+    --so-handle-edge: oklch(from var(--so-ink) l c h / calc(0.30 + (l - 0.28) * 0.10));
+    --so-handle-shadow: 0 1px 2px oklch(from var(--so-base) 0 0 0 / calc(0.28 + (1 - l) * 0.15)), 0 3px 8px oklch(from var(--so-base) 0 0 0 / calc(0.16 + (1 - l) * 0.15));
+    --so-image-dim: oklch(from var(--so-base) 0 0 0 / calc((1 - l) * 0.13));
+
+    /* Accent and status colors: lightness chosen to read on the current surface */
+    --so-accent:        oklch(from var(--so-base) clamp(0.52, calc((0.64 - l) * 100), 0.78) 0.14 var(--so-accent-hue));
+    --so-color-success: oklch(from var(--so-base) clamp(0.50, calc((0.64 - l) * 100), 0.80) 0.13 150);
+    --so-color-danger:  oklch(from var(--so-base) clamp(0.52, calc((0.64 - l) * 100), 0.78) 0.16 25);
+
+    /* Geometry that follows from the inputs */
+    --so-btn-height: calc(var(--so-bar-height) - 2 * var(--so-pad));
+    --so-btn-radius: calc(var(--so-radius) - var(--so-pad));
+    --so-level-offset: calc(var(--so-pad) + var(--so-level-space));
+    --so-card-radius: calc(var(--so-radius) + 2px);
+    --so-inner-radius: calc(var(--so-card-radius) - var(--so-card-pad));
+    --so-qr-bg: #FFFFFF;         /* functional: QR codes need a white quiet zone to scan */
+    --so-font: var(--so-font-weight) var(--so-font-size)/1 var(--so-font-family);
+    --so-focus-ring: 2px solid color-mix(in oklab, var(--so-ink) 55%, transparent);
+    --so-focus-offset: -2px;
+}

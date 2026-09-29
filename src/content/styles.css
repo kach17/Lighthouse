@@ -1,0 +1,394 @@
+/*
+  Lighthouse - Component Styles
+  Every value comes from tokens.css. Surfaces never pick colors themselves:
+  each level sets which tone it is, and everything inside derives from that.
+*/
+
+/* ---------- Levels ----------
+   Level 0 is the bar. A popover is one tone deeper than the surface that opened it,
+   and the button that opened it takes exactly that tone (the "thread"). */
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost), .lh-popup {
+  --so-level-surface: var(--so-surface);
+  --so-level-hover: var(--so-hover-0);
+  --so-level-engaged: var(--so-tone-1);
+}
+.lighthouse-popover {
+  --so-level-surface: var(--so-tone-1);
+  --so-level-hover: var(--so-hover-1);
+  --so-level-engaged: var(--so-tone-2);
+}
+.lighthouse-popover .lighthouse-popover {
+  --so-level-surface: var(--so-tone-2);
+  --so-level-hover: var(--so-hover-2);
+  --so-level-engaged: var(--so-tone-3);
+}
+
+/* ---------- Bar ---------- */
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost) {
+  position: fixed; display: flex; align-items: center; gap: var(--so-gap);
+  height: var(--so-bar-height); padding: var(--so-pad); box-sizing: border-box;
+  border-radius: var(--so-radius); background: var(--so-level-surface); color: var(--so-ink);
+  box-shadow: var(--so-shadow);
+  font: var(--so-font);
+  /* Positioned by ui.js at whole pixels (left edge, not a -50% shift, which can land on half a
+     pixel and blur text). Position is never animated: the bar appears where it belongs and
+     moves with the text while scrolling. It grows out of the point it is anchored to. */
+  opacity: 0; pointer-events: none; transform-origin: var(--lh-origin-x, 50%) 100%;
+  /* Rises out of the selection: from below when it sits above the text, from above when below */
+  transform: translateY(var(--so-reveal-distance));
+  transition: none;
+  z-index: var(--so-z-tooltip);
+
+  &.visible {
+    opacity: 1; pointer-events: auto; transform: none;
+    &.arriving { pointer-events: none; }
+    transition: opacity var(--so-duration) var(--so-ease), transform var(--so-duration) var(--so-ease);
+  }
+  &:is(.mode-bottom, .mode-sticky-top) { transform-origin: var(--lh-origin-x, 50%) 0; }
+  &:is(.mode-bottom, .mode-sticky-top):not(.visible) { transform: translateY(calc(-1 * var(--so-reveal-distance))); }
+
+  /* The quoted selection only shows when the bar is pinned to an edge */
+  &:is(.mode-top, .mode-bottom) > .lighthouse-preview { display: none; }
+}
+
+/* A bar that is leaving: a snapshot fades out where it was, while the real bar rises in
+   wherever the new selection is (or stays hidden). Never interactive. */
+.lighthouse-ghost {
+  /* starts exactly as the bar looked (inline opacity and transform set by ui.js) */
+  pointer-events: none !important;
+  transition: opacity var(--so-duration-out) var(--so-ease) !important;
+  & * { pointer-events: none !important; }
+}
+
+/* ---------- Buttons ---------- */
+.lighthouse-swatch { width: 14px; height: 14px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.15); }
+.lighthouse-btn.is-current .lighthouse-swatch { box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.15), 0 0 0 2px var(--so-surface), 0 0 0 3.5px var(--so-ink-sub); }
+.lighthouse-btn, .lighthouse-paste-btn {
+  position: relative; display: inline-flex; align-items: center; flex: none; gap: var(--so-icon-gap);
+  height: var(--so-btn-height); padding: 0 var(--so-btn-pad-x); box-sizing: border-box;
+  border: 0; border-radius: var(--so-btn-radius); background: transparent; color: inherit;
+  font: inherit; white-space: nowrap; cursor: pointer;
+  transition: background-color var(--so-duration) var(--so-ease);
+}
+.lighthouse-btn:hover, .lighthouse-paste-btn:hover { background: var(--so-level-hover); }
+.lighthouse-btn:active, .lighthouse-paste-btn:active { background: var(--so-level-engaged); }
+/* The thread: a button with its popover open is made of the popover's tone */
+.lighthouse-btn:has(> .lighthouse-popover.visible) { background: var(--so-level-engaged); }
+/* Chosen among siblings (active tab, selected theme): same tone as an open popover */
+.lighthouse-btn.is-engaged, .lh-row.is-engaged { background: var(--so-level-engaged); color: var(--so-ink); }
+/* A toggle that is on (e.g. Read aloud playing) inverts */
+.lighthouse-btn.is-active, .lighthouse-btn.is-active:hover { background: var(--so-ink); color: var(--so-level-surface); }
+
+.lighthouse-btn > svg, .lighthouse-btn > img, .lighthouse-paste-btn > svg {
+  width: var(--so-icon-size); height: var(--so-icon-size); flex: none; pointer-events: none;
+  stroke-width: var(--so-icon-stroke);
+}
+.lighthouse-btn > img { border-radius: calc(var(--so-icon-size) / 4); }
+.lighthouse-label { pointer-events: none; }
+
+.text-only-btn > svg, .text-only-btn > img { display: none; }
+
+.lighthouse-paste-btn > span { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--so-ink-sub); font-weight: 400; }
+
+/* Hover bridge across the gap to a popover */
+.lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: calc(var(--so-level-offset) + 2px); bottom: 100%; }
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost).mode-bottom .lighthouse-btn.has-popover::after,
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost).mode-sticky-top .lighthouse-btn.has-popover::after { bottom: auto; top: 100%; }
+
+/* ---------- Icon-only mode (labels off) ----------
+   Buttons become squares; each label becomes a small hover label made of the same material,
+   so nothing is lost (e.g. Convert's value). Text-only buttons keep their text. */
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-labels="off"] {
+  height: calc(var(--so-icon-only-button) + 2 * var(--so-pad));
+
+  & .lighthouse-btn:not(.text-only-btn) {
+    width: var(--so-icon-only-button); height: var(--so-icon-only-button); padding: 0; justify-content: center;
+
+    & > svg, & > img { width: var(--so-icon-only-icon); height: var(--so-icon-only-icon); }
+    & > .lighthouse-label {
+      position: absolute; left: 50%; bottom: calc(100% + var(--so-level-offset));
+      padding: 5px var(--so-space-4); border-radius: var(--so-btn-radius);
+      background: var(--so-surface); color: var(--so-ink); box-shadow: var(--so-shadow);
+      font-size: calc(var(--so-font-size) - 1px); white-space: nowrap; z-index: var(--so-z-popover);
+      opacity: 0; transform: translateX(-50%) translateY(2px);
+      transition: opacity var(--so-duration-out) var(--so-ease), transform var(--so-duration-out) var(--so-ease);
+    }
+    &:hover > .lighthouse-label {
+      opacity: 1; transform: translateX(-50%);
+      transition-duration: var(--so-duration); transition-delay: var(--so-label-delay);
+    }
+  }
+  /* An open popover replaces the hover label */
+  & .lighthouse-btn:has(> .lighthouse-popover.visible) > .lighthouse-label { opacity: 0; transition-delay: 0s; }
+  /* Bar below the selection: hover labels open downward, away from the text */
+  &.mode-bottom .lighthouse-btn:not(.text-only-btn) > .lighthouse-label { bottom: auto; top: calc(100% + var(--so-level-offset)); }
+}
+
+/* ---------- Identity: quoted selection ---------- */
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost) > .lighthouse-preview {
+  max-width: calc(var(--so-preview-width) / 2); padding: 0 var(--so-btn-pad-x); margin-right: var(--so-group-gap);
+  color: var(--so-ink-sub); font-weight: 400; white-space: nowrap; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--so-fade-width)), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - var(--so-fade-width)), transparent);
+}
+
+/* ---------- Popovers ---------- */
+.lighthouse-popover {
+  /* left is set by ui.js in whole pixels, centered on its button and kept on screen */
+  position: absolute; left: 0; bottom: calc(100% + var(--so-level-offset));
+  display: flex; align-items: center; gap: var(--so-gap);
+  min-height: var(--so-bar-height); width: max-content; padding: var(--so-pad); box-sizing: border-box;
+  border-radius: var(--so-radius); background: var(--so-level-surface); color: var(--so-ink);
+  box-shadow: var(--so-shadow); cursor: default; z-index: var(--so-z-popover);
+  font: var(--so-font);
+  opacity: 0; pointer-events: none;
+  /* Grows out of its button, even when shifted to stay on screen */
+  transform-origin: var(--lh-origin-x, 50%) 100%;
+  transform: translateY(3px) scale(0.97);
+  transition: opacity var(--so-duration-out) var(--so-ease), transform var(--so-duration-out) var(--so-ease);
+}
+.lighthouse-popover.visible {
+  opacity: 1; pointer-events: auto;
+  transform: none;
+  transition: opacity var(--so-duration) var(--so-ease), transform var(--so-duration) var(--so-ease);
+}
+.lighthouse-popover.mode-bottom {
+  bottom: auto; top: calc(100% + var(--so-level-offset));
+  transform-origin: var(--lh-origin-x, 50%) 0;
+  transform: translateY(-3px) scale(0.97);
+}
+.lighthouse-popover.mode-bottom.visible { transform: none; }
+/* Hover bridge back to the button */
+.lighthouse-popover::before { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: calc(var(--so-level-offset) + 2px); }
+.lighthouse-popover.mode-bottom::before { top: auto; bottom: 100%; }
+
+/* Text previews inside popovers */
+.lighthouse-popover .lighthouse-preview {
+  display: flex; align-items: center; max-width: var(--so-preview-width); padding: 0 var(--so-btn-pad-x);
+  color: var(--so-ink); font-weight: 400; white-space: nowrap; overflow: hidden;
+}
+.lighthouse-popover .lighthouse-preview:has(.lighthouse-scroll-text) {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--so-fade-width)), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - var(--so-fade-width)), transparent);
+}
+.lighthouse-scroll-text { display: inline-block; }
+.lighthouse-preview:hover .lighthouse-scroll-text { animation: lighthouse-pan 4s linear infinite alternate; animation-delay: 0.5s; }
+@keyframes lighthouse-pan {
+  0%, 15% { transform: translateX(0); }
+  100% { transform: translateX(min(0px, calc(-100% + var(--so-preview-width) - 24px))); }
+}
+
+/* Answers: computed or fetched values get their own voice */
+.is-value, .is-value .lighthouse-scroll-text {
+  font-family: var(--so-font-mono); font-variant-numeric: tabular-nums;
+  font-weight: var(--so-font-weight); letter-spacing: -0.01em;
+}
+
+/* Multi-line text preview (definitions, translations) */
+.lh-text {
+  max-width: var(--so-preview-width); padding: calc(var(--so-pad) + var(--so-space-1)) var(--so-btn-pad-x);
+  color: var(--so-ink); font-weight: 400; line-height: 1.45; white-space: normal; text-align: left;
+}
+
+/* Value with a swatch (colors) */
+.lh-row { display: flex; align-items: center; gap: var(--so-icon-gap); padding: 0 var(--so-btn-pad-x); }
+.lh-swatch { width: var(--so-icon-size); height: var(--so-icon-size); border-radius: 50%; flex: none; background: var(--swatch); box-shadow: inset 0 0 0 1px var(--so-hairline); }
+
+/* Snippet expansion */
+.lh-snippet {
+  max-width: var(--so-card-width); padding: calc(var(--so-pad) + var(--so-space-1)) var(--so-btn-pad-x);
+  font: 400 calc(var(--so-font-size) - 1px)/1.5 var(--so-font-mono); white-space: pre-wrap; text-align: left;
+}
+
+/* ---------- Cards (media) ---------- */
+/* Only the popover that directly holds the card or QR, never its ancestors (e.g. More) */
+.lighthouse-popover:has(> .lighthouse-content > .lh-card), .lighthouse-popover:has(> .lighthouse-content > .qr-code) {
+  flex-direction: column; align-items: stretch;
+  padding: var(--so-card-pad); border-radius: var(--so-card-radius);
+}
+.lighthouse-popover:has(> .lighthouse-content > .lh-card) { width: var(--so-card-width); }
+.lighthouse-popover:has(> .lighthouse-content > .lh-card) > .lighthouse-btn { justify-content: flex-start; }
+
+.lh-card { display: flex; flex-direction: column; white-space: normal; text-align: left; }
+.lh-card-media {
+  position: relative; aspect-ratio: 16 / 9; overflow: hidden;
+  border-radius: var(--so-inner-radius); background: var(--so-level-engaged); /* placeholder until the image paints */
+}
+.lh-card-media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* Images are content: never recolored. Only a hairline edge, and a slight dim on dark surfaces. */
+.lh-card-media::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: var(--so-image-dim); box-shadow: inset 0 0 0 1px var(--so-hairline);
+}
+.lh-card-title { margin: var(--so-space-5) var(--so-card-text-inset) 3px; font-weight: 600; font-size: calc(var(--so-font-size) + 0.5px); line-height: 1.3; }
+.lh-card-desc { margin: 0 var(--so-card-text-inset) var(--so-space-2); color: var(--so-ink-sub); font-weight: 400; font-size: calc(var(--so-font-size) - 1px); line-height: 1.4; }
+.lh-card-body { margin: 0 var(--so-card-text-inset) var(--so-space-4); color: var(--so-ink-sub); font-weight: 400; font-size: calc(var(--so-font-size) - 0.5px); line-height: 1.5; }
+
+.qr-code {
+  display: block; width: var(--so-qr-size); height: var(--so-qr-size); box-sizing: content-box;
+  padding: var(--so-space-3); background: var(--so-qr-bg); border-radius: var(--so-inner-radius);
+}
+
+/* ---------- Shared settings components (popup) ----------
+   Same tokens, same states as the bar. State rules:
+   tone = open or chosen, inverted ink = happening now (bar only),
+   lists show state by structure, single settings state their value in words,
+   fields are outlined, nothing moves under the cursor. */
+.lh-desc { margin: 0; padding: var(--so-space-1) var(--so-btn-pad-x) var(--so-btn-pad-x); color: var(--so-ink-sub); font: 400 calc(var(--so-font-size) - 1px)/1.45 var(--so-font-family); }
+.lh-section-title { margin: 0; padding: 14px var(--so-btn-pad-x) var(--so-space-3); color: var(--so-ink-sub); font: 600 calc(var(--so-font-size) - 1px)/1 var(--so-font-family); }
+.lh-section-title:first-child { padding-top: var(--so-space-2); }
+.lh-group-label { padding: var(--so-space-7) var(--so-btn-pad-x) var(--so-space-4) calc(var(--so-btn-pad-x) + var(--so-icon-size) + var(--so-space-4)); color: var(--so-ink-sub); font: 600 calc(var(--so-font-size) - 1px)/1 var(--so-font-family); }
+.lh-list { margin: 0; padding: 0; list-style: none; }
+
+.lh-row {
+  position: relative; display: flex; align-items: center; gap: var(--so-space-5);
+  min-height: var(--so-row-height); padding: 0 var(--so-btn-pad-x); box-sizing: border-box;
+  border-radius: calc(var(--so-radius) - 1px); color: var(--so-ink); cursor: pointer; user-select: none;
+  transition: background-color var(--so-duration) var(--so-ease);
+}
+.lh-row:hover { background: var(--so-level-hover); }
+.lh-row:focus-visible, .lh-row:has(input:focus-visible) { outline: var(--so-focus-ring); outline-offset: var(--so-focus-offset); }
+.lh-row.is-off { color: var(--so-ink-sub); }
+.lh-row.dragging { opacity: 0.4; }
+.lh-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lh-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 7px 0; }
+.lh-row-text small { color: var(--so-ink-sub); font: 400 calc(var(--so-font-size) - 1px)/1.3 var(--so-font-family); }
+.lh-row-icon { display: flex; flex: none; width: var(--so-icon-size); height: var(--so-icon-size); }
+.lh-row-icon svg, .lh-row-icon img { width: 100%; height: 100%; stroke-width: var(--so-icon-stroke); border-radius: calc(var(--so-icon-size) / 4); }
+.lh-row-grip { display: flex; flex: none; width: 12px; height: 12px; margin-right: -4px; color: var(--so-ink-sub); opacity: 0; transition: opacity var(--so-duration) var(--so-ease); }
+.lh-row-grip svg { width: 100%; height: 100%; }
+.lh-row[draggable="true"]:hover .lh-row-grip { opacity: 1; }
+.lh-row-mono { flex: none; font-family: var(--so-font-mono); font-size: calc(var(--so-font-size) - 0.5px); }
+.lh-row-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--so-ink-sub); font-weight: 400; }
+
+/* State in words: a list row just toggled, before it moves */
+.lh-row-state { flex: none; color: var(--so-ink-sub); font-weight: 400; }
+.lh-row-state.is-on { color: var(--so-ink); font-weight: var(--so-font-weight); }
+
+/* Delete appears on hover, where the state would sit */
+.lh-row-delete { display: none; flex: none; padding: var(--so-space-2); margin-right: -4px; border: 0; border-radius: calc(var(--so-btn-radius) - 1px); background: transparent; color: var(--so-ink-sub); cursor: pointer; }
+.lh-row-delete svg { display: block; width: var(--so-icon-size); height: var(--so-icon-size); stroke-width: var(--so-icon-stroke); }
+.lh-row:hover .lh-row-delete, .lh-row:focus-within .lh-row-delete { display: flex; }
+.lh-row-delete:hover { color: var(--so-color-danger); background: var(--so-level-hover); }
+
+/* Fields: outlined, never toned */
+.lh-field {
+  height: var(--so-control-height); padding: 0 var(--so-space-5); box-sizing: border-box; border: 0; border-radius: calc(var(--so-radius) - 1px);
+  background: transparent; color: var(--so-ink); box-shadow: inset 0 0 0 1px var(--so-edge);
+  font: 400 var(--so-font-size)/1.3 var(--so-font-family); outline: none;
+  transition: box-shadow var(--so-duration) var(--so-ease);
+}
+.lh-field::placeholder { color: var(--so-ink-sub); }
+.lh-field:focus { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--so-ink) 55%, transparent); }
+textarea.lh-field { height: auto; padding: var(--so-space-4) var(--so-space-5); resize: none; }
+.lh-field.is-mono { font-family: var(--so-font-mono); font-size: calc(var(--so-font-size) - 1px); }
+
+/* Select: a field with our own chevron; the option list stays native */
+.lh-select { position: relative; display: inline-flex; width: var(--so-control-width); flex: none; }
+.lh-select > select {
+  appearance: none; -webkit-appearance: none; width: 100%; padding-right: 28px; cursor: pointer;
+  text-overflow: ellipsis; white-space: nowrap; overflow: hidden;
+}
+.lh-select > select option { background: var(--so-surface); color: var(--so-ink); }
+.lh-select::after {
+  content: ''; position: absolute; right: 12px; top: 50%; width: 6px; height: 6px; margin-top: -5px; pointer-events: none;
+  border-right: 1.5px solid var(--so-ink-sub); border-bottom: 1.5px solid var(--so-ink-sub); transform: rotate(45deg);
+}
+
+/* Segmented control: an outlined track, the chosen segment takes the tone.
+   Used for tabs, for choosing one of a few options, and for On/Off. */
+.lh-seg {
+  display: flex; gap: var(--so-gap); padding: var(--so-space-1); box-sizing: border-box; flex: none;
+  border-radius: calc(var(--so-radius) - 1px); box-shadow: inset 0 0 0 1px var(--so-edge);
+}
+.lh-seg.is-control { width: var(--so-control-width); }
+.lh-seg-btn {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--so-icon-gap);
+  height: calc(var(--so-control-height) - 4px); padding: 0 var(--so-btn-pad-x); box-sizing: border-box;
+  border: 0; border-radius: calc(var(--so-radius) - 3px); background: transparent; color: var(--so-ink-sub);
+  font: inherit; white-space: nowrap; cursor: pointer; transition: background-color var(--so-duration) var(--so-ease), color var(--so-duration) var(--so-ease);
+}
+.lh-seg-btn:hover { background: var(--so-level-hover); color: var(--so-ink); }
+.lh-seg-btn.is-engaged,
+.lh-toggle:has(input:checked) .lh-seg-btn[data-value="true"],
+.lh-toggle:not(:has(input:checked)) .lh-seg-btn[data-value="false"] { background: var(--so-level-engaged); color: var(--so-ink); box-shadow: inset 0 0 0 1px var(--so-edge); }
+.lh-seg-btn:focus-visible { outline: var(--so-focus-ring); outline-offset: var(--so-focus-offset); }
+
+/* A setting row whose control is On/Off */
+.lh-toggle { cursor: pointer; }
+.lh-toggle:has(input:focus-visible) .lh-seg { box-shadow: inset 0 0 0 1px var(--so-edge), 0 0 0 2px color-mix(in oklab, var(--so-ink) 40%, transparent); }
+
+/* Adding to a list: a row-style button that opens its fields in place */
+.lh-add-trigger { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; color: var(--so-ink-sub); }
+.lh-add-trigger:hover { color: var(--so-ink); }
+.lh-add-trigger .lh-add-plus { display: inline-flex; justify-content: center; width: var(--so-icon-size); font-size: calc(var(--so-font-size) + 3px); font-weight: 400; line-height: 1; }
+.lh-add-form { display: flex; flex-direction: column; gap: var(--so-space-3); padding: var(--so-space-3) var(--so-btn-pad-x) 0; }
+.lh-add-form[hidden] { display: none; }
+.lh-add-actions { display: flex; gap: var(--so-gap); justify-content: flex-end; }
+.lighthouse-btn.is-outlined { box-shadow: inset 0 0 0 1px var(--so-edge); }
+
+.lh-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---------- Toast ---------- */
+.lighthouse-toast {
+  position: fixed; bottom: 30px; left: 0; right: 0; width: max-content; max-width: calc(100vw - 2 * var(--so-viewport-margin)); margin: 0 auto;
+  display: flex; align-items: center; gap: var(--so-btn-pad-x);
+  min-height: var(--so-bar-height); padding: 0 calc(var(--so-btn-pad-x) + var(--so-space-2)) 0 var(--so-btn-pad-x) ; box-sizing: border-box;
+  border-radius: var(--so-radius); background: var(--so-surface); color: var(--so-ink); box-shadow: var(--so-shadow);
+  font: var(--so-font); z-index: var(--so-z-toast);
+  animation: lighthouse-toast-in var(--so-duration) var(--so-ease);
+}
+.lighthouse-toast::before { content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--so-color-success); }
+.lighthouse-toast.error::before { background: var(--so-color-danger); }
+.lighthouse-toast.fade-out { opacity: 0; transition: opacity var(--so-duration-out) var(--so-ease); }
+@keyframes lighthouse-toast-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+
+/* ---------- Selection handles ----------
+   A small tab of the bar's material (surface, edge, highlight, shadow) hanging just
+   below the selection edge, plus a hairline guide
+   along the edge itself. States match the buttons: hover tone, then the engaged tone
+   while dragging. */
+.lighthouse-tooltip-draghandle {
+  position: fixed; left: 0; top: 0; width: var(--so-handle-width); z-index: var(--so-z-handle);
+  pointer-events: none; opacity: 0;
+  transition: opacity var(--so-duration) var(--so-ease);
+}
+.lighthouse-tooltip-draghandle.is-settling { transition: opacity var(--so-duration) var(--so-ease), transform var(--so-duration) var(--so-ease); }
+/* Hairline guide along the selection edge; also sizes the handle to the selected line */
+.lighthouse-tooltip-draghandle-line {
+  width: var(--so-handle-line-width); margin: 0 auto; pointer-events: none;
+  background: var(--so-handle-line-color);
+}
+.lighthouse-tooltip-draghandle-circle {
+  position: absolute; left: 0; top: calc(100% + var(--so-handle-gap));
+  width: 100%; height: var(--so-handle-height); box-sizing: border-box;
+  border-radius: var(--so-handle-radius); background: var(--so-surface); cursor: grab; pointer-events: auto;
+  box-shadow: inset 0 1px 0 var(--so-highlight), 0 0 0 1px var(--so-handle-edge), var(--so-handle-shadow);
+  transition: background-color var(--so-duration) var(--so-ease);
+}
+/* Tabs always hang below the selection edge. They never flip with the bar's position:
+   a handle must not change shape under the cursor while it is held or just released. */
+.lighthouse-tooltip-draghandle-circle:hover { background: var(--so-hover-0); }
+.is-dragging > .lighthouse-tooltip-draghandle-circle { background: var(--so-tone-1); cursor: grabbing; }
+/* Grip: two vertical dots in ink. Contrast inside the handle itself, so it is found on any page,
+   and the universal sign for "drag me". */
+.lighthouse-tooltip-draghandle-circle::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: var(--so-handle-dot); height: var(--so-handle-dot); border-radius: 50%;
+  margin-left: calc(var(--so-handle-dot) / -2); margin-top: calc((var(--so-handle-dot) + var(--so-handle-dot-gap)) / -2);
+  background: var(--so-handle-dot-color); box-shadow: 0 var(--so-handle-dot-gap) 0 var(--so-handle-dot-color);
+}
+/* Generous invisible grab area */
+.lighthouse-tooltip-draghandle-circle::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: var(--so-handle-hit); height: var(--so-handle-hit); transform: translate(-50%, -50%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #lighthouse-extension-tooltip, .lighthouse-popover, .lighthouse-toast { transition-property: opacity !important; animation: none !important; }
+  .lighthouse-preview:hover .lighthouse-scroll-text { animation: none; }
+}

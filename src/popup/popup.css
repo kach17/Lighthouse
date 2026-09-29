@@ -1,0 +1,58 @@
+/*
+  Lighthouse - Popup layout
+  Layout only. Every component and value comes from tokens.css and styles.css,
+  the same files the bar uses.
+*/
+html, body { margin: 0; }
+body.lh-popup {
+  width: 340px; height: 560px; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--so-surface); color: var(--so-ink);
+  font: var(--so-font);
+}
+
+/* Header: the name once, the site state stated in words */
+.p-head { display: flex; align-items: center; justify-content: space-between; gap: var(--so-space-6); padding: 14px var(--so-space-6) var(--so-space-3) 18px; }
+.p-mark { font-size: calc(var(--so-font-size) + 2px); font-weight: 650; letter-spacing: -0.01em; }
+.p-site { height: var(--so-control-height); max-width: 210px; }
+.p-site-name { overflow: hidden; text-overflow: ellipsis; color: var(--so-ink-sub); font-weight: 400; }
+.p-site:has(input:checked) .p-site-state::after { content: 'On'; }
+.p-site:not(:has(input:checked)) .p-site-state::after { content: 'Off'; }
+.p-site:not(:has(input:checked)) .p-site-state { color: var(--so-ink-sub); }
+.p-site:has(input:disabled) { cursor: default; background: transparent; }
+.p-site:has(input:disabled) .p-site-state { display: none; }
+.p-site:has(input:focus-visible) { outline: var(--so-focus-ring); outline-offset: var(--so-focus-offset); }
+
+/* Tabs: bar buttons; the chosen one is engaged */
+/* Tabs: a segmented control, four equal segments across the width */
+.p-tabs { margin: var(--so-space-4) var(--so-space-6) var(--so-space-3); }
+
+/* Body: one steady height, lists scroll inside */
+.p-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--so-space-4) var(--so-space-6) var(--so-space-7); scrollbar-width: thin; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Rows that are static containers for a field */
+.lh-row.p-static { cursor: default; }
+.lh-row.p-static:hover { background: transparent; }
+
+
+
+
+.lh-add-trigger { margin-top: var(--so-space-3); }
+
+.p-empty { display: flex; flex-direction: column; gap: var(--so-space-3); padding: 18px var(--so-btn-pad-x) var(--so-space-3); }
+.p-empty strong { font-weight: var(--so-font-weight); }
+.p-empty span { color: var(--so-ink-sub); font: 400 calc(var(--so-font-size) - 1px)/1.45 var(--so-font-family); }
+
+/* Developer options */
+.p-dev { margin-top: var(--so-space-5); }
+.p-dev > summary { list-style: none; color: var(--so-ink-sub); }
+.p-dev > summary::-webkit-details-marker { display: none; }
+.p-disclosure { width: 7px; height: 7px; margin-right: 3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform var(--so-duration) var(--so-ease); }
+.p-dev[open] .p-disclosure { transform: rotate(45deg); }
+.p-dev-block { display: flex; flex-direction: column; gap: var(--so-space-4); padding: var(--so-space-6) var(--so-btn-pad-x) 0; }
+.p-dev-actions { display: flex; gap: var(--so-btn-pad-x); }
+.p-css { min-height: 120px; }
+.p-version { padding-top: var(--so-space-7); }
+
+[hidden] { display: none !important; }
