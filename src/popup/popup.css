@@ -11,16 +11,16 @@ body.lh-popup {
 }
 
 /* Header: the name once, the site state stated in words */
-.p-head { display: flex; align-items: center; justify-content: space-between; gap: var(--so-space-6); padding: 14px var(--so-space-6) var(--so-space-3) 18px; }
+.p-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--so-space-4); padding: 14px var(--so-space-6) var(--so-space-3) 18px; }
 .p-mark { font-size: calc(var(--so-font-size) + 2px); font-weight: 650; letter-spacing: -0.01em; }
-.p-site { height: var(--so-control-height); max-width: 210px; }
-.p-site-name { overflow: hidden; text-overflow: ellipsis; color: var(--so-ink-sub); font-weight: 400; }
-.p-site:has(input:checked) .p-site-state::after { content: 'On'; }
-.p-site:not(:has(input:checked)) .p-site-state::after { content: 'Off'; }
-.p-site:not(:has(input:checked)) .p-site-state { color: var(--so-ink-sub); }
-.p-site:has(input:disabled) { cursor: default; background: transparent; }
-.p-site:has(input:disabled) .p-site-state { display: none; }
-.p-site:has(input:focus-visible) { outline: var(--so-focus-ring); outline-offset: var(--so-focus-offset); }
+/* The site switch: this site's name, then the same Off | On control as every other setting */
+.p-site { display: flex; align-items: center; gap: var(--so-space-4); min-width: 0; }
+.p-site-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--so-ink-sub); font-weight: 400; cursor: pointer; }
+.lh-seg.is-control.p-site-seg { width: auto; flex: none; }
+.p-site-seg .lh-seg-btn { padding: 0 var(--so-space-5); }
+.p-site:has(input:disabled) { cursor: default; }
+.p-site:has(input:disabled) .p-site-name { cursor: default; }
+.p-site:has(input:disabled) .p-site-seg { display: none; }
 
 /* Tabs: bar buttons; the chosen one is engaged */
 /* Tabs: a segmented control, four equal segments across the width */
@@ -40,9 +40,17 @@ body.lh-popup {
 
 .lh-add-trigger { margin-top: var(--so-space-3); }
 
-.p-empty { display: flex; flex-direction: column; gap: var(--so-space-3); padding: 18px var(--so-btn-pad-x) var(--so-space-3); }
-.p-empty strong { font-weight: var(--so-font-weight); }
-.p-empty span { color: var(--so-ink-sub); font: 400 calc(var(--so-font-size) - 1px)/1.45 var(--so-font-family); }
+/* Snippets: the hint under a list; the name field with its fixed "//" block */
+.p-hint { padding-top: var(--so-space-4); }
+.p-prefix-field { display: flex; }
+.p-prefix {
+  display: flex; align-items: center; padding: 0 var(--so-space-4); flex: none;
+  border-radius: calc(var(--so-radius) - 1px) 0 0 calc(var(--so-radius) - 1px);
+  background: color-mix(in oklab, var(--so-ink) 6%, transparent); box-shadow: inset 0 0 0 1px var(--so-edge);
+  color: var(--so-ink-sub); font: 400 calc(var(--so-font-size) - 1px)/1 var(--so-font-mono);
+}
+.p-prefix-field > .lh-field { flex: 1; min-width: 0; margin-left: -1px; border-radius: 0 calc(var(--so-radius) - 1px) calc(var(--so-radius) - 1px) 0; }
+.p-error { margin: 0; color: var(--so-color-danger); font: 400 calc(var(--so-font-size) - 1px)/1.4 var(--so-font-family); }
 
 /* Developer options */
 .p-dev { margin-top: var(--so-space-5); }

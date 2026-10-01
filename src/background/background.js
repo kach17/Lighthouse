@@ -191,7 +191,7 @@ async function handleGetRate(base, target, sendResponse) {
 }
 
 async function translateText(text, targetLang = 'en') {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
+    const url = `https://translate.googleapis.com/translate_a/single?client=at&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
     const data = JSON.parse(await gatewayFetch(url));
     return {
         text: data?.[0]?.map(part => part[0]).join('') || '',

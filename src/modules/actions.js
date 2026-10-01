@@ -893,7 +893,8 @@
             condition: (ctx) => {
                 const t = ctx.cleanText;
                 if (t.length < 4 || t.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(t)) return false;
-                try { return atob(t).length > 0; } catch(e) { return false; }
+                // Only if it decodes to readable text: plain words like "Unix" decode to byte garbage
+                try { return !/[\x00-\x08\x0E-\x1F]/.test(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(t), c => c.charCodeAt(0)))); } catch(e) { return false; }
             },
             execute: (ctx, tools) => {
                 try {
@@ -906,7 +907,6 @@
             preview: (ctx, tools) => {
                 try {
                     const decoded = atob(ctx.cleanText);
-                    if (/[\x00-\x08\x0E-\x1F]/.test(decoded)) return { previewText: 'Binary Data' };
                     const safe = Utils.shorten(decoded, 20);
                     return tools.buildCopyMenu(decoded, `"${safe}"`);
                 } catch(e) { return null; }

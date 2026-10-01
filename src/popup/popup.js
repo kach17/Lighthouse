@@ -17,7 +17,6 @@
 
             bindCheckbox('toggle-snapping', items.smartSnapping, v => updateSetting('smartSnapping', v));
             bindCheckbox('toggle-handles', items.addDragHandles !== false, v => updateSetting('addDragHandles', v));
-            bindCheckbox('toggle-debug', items.debugMode || false, v => updateSetting('debugMode', v));
             bindCheckbox('toggle-labels', items.showLabels !== false, v => updateSetting('showLabels', v));
             bindCheckbox('toggle-tidy', items.tidySpacing !== false, v => updateSetting('tidySpacing', v));
             setupLinkPreviews(items.linkPreviews === true);
@@ -34,7 +33,6 @@
             setupSiteToggle();
             setupTabs();
             setupImportExport();
-            setupPendingFlush();
 
             const version = document.getElementById('version-label');
             if (version) version.textContent = `Version ${chrome.runtime.getManifest().version}`;
@@ -102,6 +100,7 @@
         document.querySelectorAll('.lh-toggle').forEach(row => {
             const input = row.querySelector('input[type="checkbox"]');
             row.addEventListener('click', (e) => {
+                if (input.disabled) return;
                 if (e.target === input || e.target.closest('label')) return; // the label toggles natively
                 const seg  = e.target.closest('[data-value]');
                 const next = seg ? seg.dataset.value === 'true' : !input.checked;
@@ -204,7 +203,7 @@
             return currentState.blacklist;
         };
         const unavailable = () => {
-            label.textContent = 'Not available on this page';
+            label.textContent = 'Not available here';
             toggle.checked  = false;
             toggle.disabled = true;
         };
@@ -243,7 +242,6 @@
         tabs.forEach(tab => {
             tab.setAttribute('aria-selected', String(tab.classList.contains('is-engaged')));
             tab.addEventListener('click', () => {
-                flushPending();
                 tabs.forEach(t => {
                     t.classList.toggle('is-engaged', t === tab);
                     t.setAttribute('aria-selected', String(t === tab));
@@ -255,40 +253,16 @@
     }
 
     // -------------------------------------------------------------------------
-    // Lists: the row is the thing you act on.
-    // Click (or Space/Enter) turns it on or off, drag (or Alt+Arrow) reorders.
-    // Enabled rows form the ordered list; the rest sit under "Off".
-    // A toggled row confirms in place and moves when the pointer leaves the list,
-    // so nothing shifts under the cursor.
+    // Lists: one list per tab, in bar order. The row is the thing you act on:
+    // click (or Space/Enter) turns it on or off, drag (or Alt+Arrow) reorders.
+    // Rows never move on their own; a row that's off stays in place and says so.
     // -------------------------------------------------------------------------
 
-    let pending = null;
-
-    function flushPending() {
-        if (!pending) return;
-        const run = pending;
-        pending = null;
-        run();
-    }
-
-    function setupPendingFlush() {
-        document.querySelectorAll('.tab-content').forEach(sec => sec.addEventListener('mouseleave', flushPending));
-        window.addEventListener('blur', flushPending);
-    }
-
-    // Moves an item right after the last enabled one (a re-enabled item joins the end of the list)
-    function moveAfterLastOn(arr, item, isOn) {
-        arr.splice(arr.indexOf(item), 1);
-        let last = -1;
-        arr.forEach((x, i) => { if (isOn(x)) last = i; });
-        arr.splice(last + 1, 0, item);
-    }
-
-    function createRow({ label, icon, url, isOn, type, ref, onToggle, onDelete, rerender }) {
-        const state = $.create('span', { className: 'lh-row-state' });
+    function createRow({ label, icon, url, isOn, type, ref, onToggle, onDelete }) {
+        const state = $.create('span', { className: 'lh-row-state', text: isOn ? '' : 'Off' });
         const li = $.create('li', {
             className: 'lh-row list-item' + (isOn ? '' : ' is-off'),
-            attrs: { tabindex: '0', role: 'checkbox', 'aria-checked': String(isOn), 'data-type': type, draggable: String(isOn) },
+            attrs: { tabindex: '0', role: 'checkbox', 'aria-checked': String(isOn), 'data-type': type, draggable: 'true' },
             children: [
                 $.create('span', { className: 'lh-row-grip', html: GRIP_ICON }),
                 $.create('span', { className: 'lh-row-icon', children: [ $.createSmartIcon(icon, url, label) ] }),
@@ -298,133 +272,96 @@
         });
         li._ref = ref;
 
-        if (isOn) {
-            li.addEventListener('dragstart', handleDragStart);
-            li.addEventListener('dragover', handleDragOver);
-            li.addEventListener('dragenter', handleDragEnter);
-            li.addEventListener('dragend', handleDragEnd);
-        }
+        li.addEventListener('dragstart', handleDragStart);
+        li.addEventListener('dragover', handleDragOver);
+        li.addEventListener('dragenter', handleDragEnter);
+        li.addEventListener('dragend', handleDragEnd);
 
         if (onDelete) {
             li.appendChild($.create('button', {
                 className: 'lh-row-delete',
                 attrs: { 'aria-label': `Delete ${label}`, title: 'Delete' },
                 html: TRASH_ICON,
-                events: { click: (e) => { e.stopPropagation(); flushPending(); onDelete(); } }
+                events: { click: (e) => { e.stopPropagation(); onDelete(); } }
             }));
         }
 
-        const toggle = (viaKeyboard) => {
+        const toggle = () => {
             const next = li.getAttribute('aria-checked') !== 'true';
             li.setAttribute('aria-checked', String(next));
-            onToggle(next);
-            if (viaKeyboard) {
-                pending = null;
-                rerender(ref);
-                return;
-            }
-            // Confirm in place
             li.classList.toggle('is-off', !next);
-            state.textContent = next !== isOn ? (next ? 'On' : 'Off') : '';
-            state.classList.toggle('is-on', next);
-            pending = () => rerender();
+            state.textContent = next ? '' : 'Off';
+            onToggle(next);
         };
 
         li.addEventListener('click', (e) => {
             if (e.target.closest('.lh-row-delete')) return;
-            toggle(false);
+            toggle();
         });
 
         li.addEventListener('keydown', (e) => {
             if (e.target !== li) return;
-            if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(true); return; }
+            if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); return; }
             if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
             e.preventDefault();
             const sibling = e.key === 'ArrowUp' ? li.previousElementSibling : li.nextElementSibling;
-            if (e.altKey && isOn) {
-                if (!sibling) return;
+            if (!sibling) return;
+            if (e.altKey) {
                 e.key === 'ArrowUp' ? sibling.before(li) : sibling.after(li);
                 li.focus();
                 persistOrder(type);
             } else {
-                const rows = [...document.querySelectorAll(`.tab-content.active .lh-row[role="checkbox"]`)];
-                const target = rows[rows.indexOf(li) + (e.key === 'ArrowUp' ? -1 : 1)];
-                if (target) target.focus();
+                sibling.focus();
             }
         });
 
         return li;
     }
 
-    function focusRef(listIds, ref) {
-        if (ref == null) return;
-        for (const id of listIds) {
-            const row = [...document.getElementById(id).children].find(li => li._ref === ref);
-            if (row) { row.focus(); return; }
-        }
-    }
-
-    function renderButtons(focus) {
-        const onList  = document.getElementById('button-list');
-        const offList = document.getElementById('button-list-off');
-        onList.innerHTML = '';
-        offList.innerHTML = '';
-
+    function renderButtons() {
+        const list = document.getElementById('button-list');
+        list.innerHTML = '';
         currentState.order.forEach(id => {
             const meta = Config.actions.find(a => a.id === id);
             if (!meta) return;
-            const isOn = !!currentState.enabled[id];
-            (isOn ? onList : offList).appendChild(createRow({
-                label: meta.label, icon: meta.icon, isOn, type: 'main', ref: id,
+            list.appendChild(createRow({
+                label: meta.label, icon: meta.icon, isOn: !!currentState.enabled[id], type: 'main', ref: id,
                 onToggle: (next) => {
                     currentState.enabled[id] = next;
-                    if (next) moveAfterLastOn(currentState.order, id, x => x !== id && !!currentState.enabled[x]);
                     updateSetting('enabled', currentState.enabled);
-                    updateSetting('order', currentState.order);
-                },
-                rerender: renderButtons
+                }
             }));
         });
-
-        document.getElementById('button-list-off-label').hidden = offList.children.length === 0;
-        focusRef(['button-list', 'button-list-off'], focus);
     }
 
-    function renderSearch(focus) {
-        const onList  = document.getElementById('search-list');
-        const offList = document.getElementById('search-list-off');
-        onList.innerHTML = '';
-        offList.innerHTML = '';
-
+    function renderSearch() {
+        const list = document.getElementById('search-list');
+        list.innerHTML = '';
         currentState.searchEngines.forEach(engine => {
-            (engine.enabled ? onList : offList).appendChild(createRow({
+            list.appendChild(createRow({
                 label: engine.name, icon: engine.icon, url: engine.url, isOn: !!engine.enabled, type: 'search', ref: engine,
                 onToggle: (next) => {
                     engine.enabled = next;
-                    if (next) moveAfterLastOn(currentState.searchEngines, engine, e => e !== engine && !!e.enabled);
                     updateSetting('searchEngines', currentState.searchEngines);
                 },
                 onDelete: () => {
                     currentState.searchEngines.splice(currentState.searchEngines.indexOf(engine), 1);
                     updateSetting('searchEngines', currentState.searchEngines);
                     renderSearch();
-                },
-                rerender: renderSearch
+                }
             }));
         });
-
-        document.getElementById('search-list-off-label').hidden = offList.children.length === 0;
-        focusRef(['search-list', 'search-list-off'], focus);
     }
 
+    // The list is the order: read it back from the rows
     function persistOrder(type) {
         if (type === 'main') {
-            const onIds = [...document.querySelectorAll('#button-list .list-item')].map(li => li._ref);
-            currentState.order = onIds.concat(currentState.order.filter(id => !onIds.includes(id)));
+            const ids = [...document.querySelectorAll('#button-list .list-item')].map(li => li._ref);
+            currentState.order = ids.concat(currentState.order.filter(id => !ids.includes(id)));
             updateSetting('order', currentState.order);
         } else if (type === 'search') {
-            const onEngines = [...document.querySelectorAll('#search-list .list-item')].map(li => li._ref);
-            updateSetting('searchEngines', onEngines.concat(currentState.searchEngines.filter(e => !onEngines.includes(e))));
+            currentState.searchEngines = [...document.querySelectorAll('#search-list .list-item')].map(li => li._ref);
+            updateSetting('searchEngines', currentState.searchEngines);
         }
     }
 
@@ -448,31 +385,41 @@
         const save      = document.getElementById('save-add');
         const nameInput = document.getElementById('new-name');
         const urlInput  = document.getElementById('new-url');
-        const close = bindAddForm('add-trigger', 'add-form', 'cancel-add', nameInput, () => { nameInput.value = ''; urlInput.value = ''; });
+        const close = bindAddForm('add-trigger', 'add-form', 'cancel-add', urlInput, () => { nameInput.value = ''; urlInput.value = ''; });
+
+        // bing.com/search?q=%s -> "Bing"
+        const nameFromUrl = (url) => {
+            try {
+                const host = new URL(url).hostname.replace(/^www\./, '');
+                const word = host.split('.')[0];
+                return word.charAt(0).toUpperCase() + word.slice(1);
+            } catch (e) { return ''; }
+        };
 
         const add = () => {
-            const name = nameInput.value.trim();
-            let url    = urlInput.value.trim();
-            if (!name || !url) return;
+            let url = urlInput.value.trim();
+            if (!url) return;
             if (!url.startsWith('http')) url = 'https://' + url;
-            flushPending();
+            const name = nameInput.value.trim() || nameFromUrl(url);
+            if (!name) return;
             const engine = { id: 'custom-' + Date.now(), name, url, icon: null, enabled: true };
             currentState.searchEngines.push(engine);
-            moveAfterLastOn(currentState.searchEngines, engine, e => e !== engine && !!e.enabled);
             updateSetting('searchEngines', currentState.searchEngines);
             renderSearch();
             close();
         };
         save.addEventListener('click', add);
-        urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+        [urlInput, nameInput].forEach(el => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); }));
     }
 
     function renderSnippets() {
         const list     = document.getElementById('shortcuts-list');
         const empty    = document.getElementById('shortcuts-empty');
+        const hint     = document.getElementById('shortcuts-hint');
         const snippets = currentState.shortcuts || [];
         list.innerHTML = '';
         empty.hidden = snippets.length > 0;
+        hint.hidden  = snippets.length === 0;
 
         snippets.forEach((s, index) => {
             list.appendChild($.create('li', {
@@ -495,15 +442,25 @@
         const save           = document.getElementById('save-add-shortcut');
         const triggerInput   = document.getElementById('new-shortcut-trigger');
         const expansionInput = document.getElementById('new-shortcut-expansion');
-        const close = bindAddForm('add-shortcut-trigger', 'add-shortcut-form', 'cancel-add-shortcut', triggerInput, () => { triggerInput.value = ''; expansionInput.value = ''; });
+        const error          = document.getElementById('shortcut-error');
+        const say = (msg) => { error.textContent = msg; error.hidden = !msg; };
+        const close = bindAddForm('add-shortcut-trigger', 'add-shortcut-form', 'cancel-add-shortcut', triggerInput, () => { triggerInput.value = ''; expansionInput.value = ''; say(''); });
+        [triggerInput, expansionInput].forEach(el => el.addEventListener('input', () => say('')));
+
+        // The "//" is fixed in front of the field; slashes typed anyway are dropped
+        triggerInput.addEventListener('input', () => {
+            const name = triggerInput.value.replace(/^\/+/, '');
+            if (name !== triggerInput.value) triggerInput.value = name;
+        });
+        triggerInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); expansionInput.focus(); } });
 
         save.addEventListener('click', () => {
             const trigger   = triggerInput.value.trim().replace(/^\/+/, '');
             const expansion = expansionInput.value; // preserve intentional whitespace
             if (!trigger || !expansion) return;
-            if (/\s/.test(trigger)) { alert('A trigger can’t contain spaces.'); return; }
+            if (/\s/.test(trigger)) { say('A name can’t contain spaces.'); triggerInput.focus(); return; }
             if (!currentState.shortcuts) currentState.shortcuts = [];
-            if (currentState.shortcuts.find(s => s.trigger === trigger)) { alert(`//${trigger} already exists.`); return; }
+            if (currentState.shortcuts.find(s => s.trigger === trigger)) { say(`//${trigger} already exists.`); triggerInput.focus(); return; }
             currentState.shortcuts.push({ trigger, expansion });
             updateSetting('shortcuts', currentState.shortcuts);
             renderSnippets();
@@ -552,23 +509,15 @@
     }
 
     // -------------------------------------------------------------------------
-    // Drag & Drop (enabled rows only)
+    // Drag & Drop
     // -------------------------------------------------------------------------
 
     let dragSrcEl = null;
 
     function handleDragStart(e) {
-        flushPendingSafely();
         dragSrcEl = this;
         e.dataTransfer.effectAllowed = 'move';
         requestAnimationFrame(() => this.classList.add('dragging'));
-    }
-
-    // A pending toggle elsewhere in the list shouldn't re-render mid-drag;
-    // it is applied when the drag ends instead.
-    let deferredDuringDrag = null;
-    function flushPendingSafely() {
-        if (pending) { deferredDuringDrag = pending; pending = null; }
     }
 
     function handleDragOver(e) {
@@ -591,6 +540,5 @@
         this.classList.remove('dragging');
         persistOrder(this.dataset.type);
         dragSrcEl = null;
-        if (deferredDuringDrag) { const run = deferredDuringDrag; deferredDuringDrag = null; run(); }
     }
 })();
