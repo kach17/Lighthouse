@@ -36,6 +36,7 @@
   };
 
   let tokenStyle = null;
+  let languageNames = null;   // Intl.DisplayNames, made on first use
   window.LighthouseUtils = {
     Logger: logger,
     /**
@@ -199,6 +200,21 @@
     },
 
     /** A link shown compactly: host without www, plus path, shortened. Full address stays in the title. */
+    // A language's name in the bar's language (English). The script only when it isn't the language's
+    // usual one ('zh-CN' -> 'Chinese', 'zh-TW' -> 'Traditional Chinese'); the region only when asked,
+    // where it matters (spelling: 'en-GB' -> 'British English')
+    languageName: (code, { region = false } = {}) => {
+        try {
+            let shown = code;
+            if (!region) {
+                const full = new Intl.Locale(code).maximize();
+                const usual = new Intl.Locale(full.language).maximize().script;
+                shown = full.script && full.script !== usual ? `${full.language}-${full.script}` : full.language;
+            }
+            return (languageNames ||= new Intl.DisplayNames(['en'], { type: 'language' })).of(shown) || null;
+        } catch (e) { return null; }
+    },
+
     displayLink: (url, max = 32) => {
         try {
             const u = new URL(url);

@@ -101,25 +101,26 @@
         return (marked && marked.getAttribute('lang')) || pageLanguage();
     }
 
-    // { foreign: true | false | null, language }. Foreign needs evidence (another script, a confident
+    // { foreign: true | false | null, language, reliable }. Reliable: the detector was sure (of the text or
+    // its paragraph), not a guess or the page's declared language. Foreign needs evidence (another script, a confident
     // detection, a declared language the user doesn't read); an unsure guess only counts for the user's.
     async function decide(text, around) {
         const langs = userLanguages();
         const letters = (text.match(/\p{L}/gu) || []).length;
         const readable = (text.match(readableLetters(langs)) || []).length;
-        if (readable < letters / 2) return { foreign: true, language: null };      // another writing system
+        if (readable < letters / 2) return { foreign: true, language: null, reliable: false };      // another writing system
 
         const found = await detect(text);
         if (found === undefined) return { foreign: null, language: null };         // no detector available
         if (found === null) return { foreign: false, language: null };             // no language: codes, IDs
         const settles = (f) => f && (f.reliable || langs.has(f.language));
-        if (settles(found)) return { foreign: !langs.has(found.language), language: found.language };
+        if (settles(found)) return { foreign: !langs.has(found.language), language: found.language, reliable: found.reliable };
         if (around.length > text.length) {                                          // unsure: ask the paragraph
             const ctxFound = await detect(around);
-            if (settles(ctxFound)) return { foreign: !langs.has(ctxFound.language), language: ctxFound.language };
+            if (settles(ctxFound)) return { foreign: !langs.has(ctxFound.language), language: ctxFound.language, reliable: ctxFound.reliable };
         }
         const declared = base(declaredLanguage());                                  // still unsure: what the page says
-        if (declared) return { foreign: !langs.has(declared), language: declared };
+        if (declared) return { foreign: !langs.has(declared), language: declared, reliable: false };
         return { foreign: null, language: null };                                   // unknown: offer both
     }
 
@@ -147,7 +148,7 @@
         }
         const unknown = { foreign: null, language: null };
         return Promise.race([cache.get(key), new Promise(r => setTimeout(() => r(unknown), TIME_LIMIT))])
-            .then(r => (r.foreign !== true && !r.language) ? { foreign: r.foreign, language: readerLanguage() } : r);
+            .then(r => (r.foreign !== true && !r.language) ? { foreign: r.foreign, language: readerLanguage(), reliable: false } : { ...r, reliable: !!r.reliable });
     }
 
 

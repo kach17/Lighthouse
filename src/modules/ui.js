@@ -63,7 +63,9 @@
         const b = el.parentElement.getBoundingClientRect();
         const w = el.offsetWidth, h = el.offsetHeight;
         let below = /mode-(bottom|sticky-top)/.test(tooltipContainer.className);
-        if (below ? b.bottom + GAP + h > window.innerHeight - MARGIN : b.top - GAP - h < MARGIN) below = !below;
+        // A bar button's popover forms beyond the whole bar: past the strip on the strip's side (see styles.css)
+        const row = el.parentElement.parentElement === tooltipContainer && tooltipContainer.dataset.strip === 'on' ? $.token('--so-strip-height', 14) + 1 : 0;
+        if (below ? b.bottom + GAP + row + h > window.innerHeight - MARGIN : b.top - GAP - row - h < MARGIN) below = !below;
         // Centered on its button, kept on screen, at a whole pixel (relative to the button)
         const centered = b.left + b.width / 2 - w / 2;
         const shift = Math.max(MARGIN - centered, Math.min(0, window.innerWidth - MARGIN - (centered + w)));
@@ -72,6 +74,155 @@
         el.style.left = `${left}px`;
         el.style.setProperty('--lh-origin-x', `${b.width / 2 - left}px`);   // grows out of its button
         el.classList.add('visible');
+    }
+
+    // --- STRIP: the bar's status line ---
+    // A row of the bar: facts about the selection; while a button is pointed at, what is new about it
+    // (in icon-only mode, its name). A short warm-up before describing a button, instant from button
+    // to button, a grace period before returning. Only that change of subject fades.
+    let strip = null;   // { el, layers, facts, idle, tool, on, warm, grace }
+    const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
+    // Characters as seen: an emoji, or a letter with its accents, is one. Below U+0300 (Latin with its
+    // accented letters) each code unit is one character, so most text is counted at once; other text
+    // is segmented, a long selection in slices between frames so the bar never waits.
+    let counted = { text: null, count: 0 }, countTimer = null;
+    function countCharacters(text, whenDone) {
+        if (counted.text === text) return counted.count;
+        const keep = (count) => (counted = { text, count }).count;
+        if (!/[^\u0000-\u02FF]/.test(text)) return keep(text.length);
+        const graphemes = $.segmenter('grapheme').segment(text);
+        if (text.length <= 5000) return keep([...graphemes].length);
+        const it = graphemes[Symbol.iterator]();
+        let n = 0;
+        const slice = () => {
+            for (const end = performance.now() + 4; performance.now() < end; n++) if (it.next().done) return whenDone(keep(n));
+            countTimer = setTimeout(slice, 0);
+        };
+        countTimer = setTimeout(slice, 0);
+        return null;
+    }
+
+    // Most important first: on a narrow bar, as many whole facts as fit are shown (see fitStrip)
+    function selectionFacts(ctx) {
+        if (!ctx.hasText || !ctx.cleanText) return [];
+        const chars = (n) => plural(n, 'character', 'characters');
+        const facts = [plural(ctx.wordCount, 'word', 'words')];
+        const n = countCharacters(ctx.cleanText.replace(/[\r\n]+/g, ''), (later) => {
+            if (!strip) return;
+            strip.facts.splice(1, 0, chars(later));
+            strip.idle = '';
+            if (!strip.tool) fitStrip();
+        });
+        if (n !== null) facts.push(chars(n));
+        const language = ctx.languageReliable && ctx.language && $.languageName(ctx.language);
+        if (language) facts.push(language);
+        return facts;
+    }
+
+    // first: the first button's label, said when there is no selection (what the bar offers first)
+    function buildStrip(ctx, iconOnly, first) {
+        clearStrip();
+        const facts = selectionFacts(ctx);
+        if (!facts.length && iconOnly && first) facts.push(first);
+        tooltipContainer.dataset.strip = facts.length || iconOnly ? 'on' : 'off';
+        if (tooltipContainer.dataset.strip === 'off') return;
+        const layers = [$.create('span', { className: 'is-shown', text: facts.join(' · ') }), $.create('span')];
+        strip = { el: $.create('div', { className: 'lighthouse-strip', attrs: { 'aria-hidden': 'true' }, children: layers }), layers, facts, idle: '', tool: false, on: null };
+        tooltipContainer.appendChild(strip.el);
+    }
+
+    function clearStrip() {
+        clearTimeout(countTimer);
+        if (strip) { clearTimeout(strip.warm); clearTimeout(strip.grace); }
+        strip = null;
+    }
+
+    // Once the bar has its final width: as many whole facts as fit
+    function fitStrip() {
+        if (!strip || strip.tool || strip.idle) return;   // once (positioning also runs on every scroll)
+        const layer = strip.layers[0], facts = [...strip.facts];
+        layer.textContent = facts.join(' · ');
+        while (facts.length > 1 && layer.scrollWidth > layer.clientWidth) layer.textContent = (facts.pop(), facts.join(' · '));
+        strip.idle = layer.textContent;
+    }
+
+    // A change of subject: the old text fades out as the new one fades in
+    function stripSay(text, tool) {
+        const [shown, next] = strip.layers;
+        next.textContent = text;
+        shown.classList.remove('is-shown');
+        next.classList.add('is-shown');
+        strip.layers = [next, shown];
+        strip.tool = tool;
+    }
+
+    // What the strip says about a button: in icon-only mode its name, and what the action reports
+    // about its own decisions (info). Asked once per button per render, and only when pointed at.
+    // As [name, info]: the name only in icon-only mode, and not when info already says it
+    function describe(btn) {
+        return btn._described ||= Promise.resolve(btn._info ? btn._info() : null).catch(() => null).then(info => {
+            const label = tooltipContainer.dataset.labels === 'off' && !btn.classList.contains('text-only-btn')
+                && btn.querySelector(':scope > .lighthouse-label');
+            const name = label && label.textContent.trim();
+            return [info && name && info.toLowerCase().includes(name.toLowerCase()) ? null : name, info].filter(Boolean);
+        });
+    }
+
+    // A button's description: name and info if they fit, else the info alone (the icon names the button)
+    function stripTool(parts, fade) {
+        const text = parts.join(' · ');
+        if (fade) stripSay(text, true); else strip.layers[0].textContent = text;
+        const layer = strip.layers[0];
+        if (parts.length > 1 && layer.scrollWidth > layer.clientWidth) layer.textContent = parts[parts.length - 1];
+    }
+
+    // Feedback from an action that keeps the bar open (Read aloud: 'Stopped reading'): in the strip,
+    // for a moment, then back to the button or the selection. False without a strip (then: a toast).
+    function stripNotice(text) {
+        if (!strip) return false;
+        const btn = strip.on;
+        clearTimeout(strip.warm);
+        clearTimeout(strip.grace);
+        stripSay(text, true);
+        strip.on = null;   // pointing again describes afresh
+        strip.grace = setTimeout(() => {
+            if (!strip) return;
+            if (btn && btn.matches(':hover')) return stripPoint(btn);
+            stripSay(strip.idle || strip.facts.join(' · '), false);
+            fitStrip();
+        }, $.token('--so-notice-duration', 1500));
+        return true;
+    }
+
+    function stripPoint(btn) {
+        if (!strip || btn === strip.on) return;
+        strip.on = btn;
+        clearTimeout(strip.warm);
+        clearTimeout(strip.grace);
+        const back = () => { if (strip && strip.tool) strip.grace = setTimeout(() => { if (strip) { stripSay(strip.idle || strip.facts.join(' · '), false); fitStrip(); } }, $.token('--so-strip-grace', 300)); };
+        if (!btn) return back();
+        const say = (parts) => {
+            if (!strip || strip.on !== btn) return;   // moved on meanwhile
+            if (!parts.length) return back();         // nothing new here: after the grace period, back to the selection
+            stripTool(parts, !strip.tool);            // scanning: at once
+        };
+        if (strip.tool) describe(btn).then(say);
+        else strip.warm = setTimeout(() => describe(btn).then(say), $.token('--so-label-delay', 350));
+    }
+
+    // A button that stays open changed what it would do next (Case): described again
+    function redescribe(btn) {
+        delete btn._described;
+        if (strip && strip.on === btn && strip.tool) describe(btn).then(parts => { if (strip && strip.on === btn && parts.length) stripTool(parts, false); });
+    }
+
+    function watchStrip() {
+        const pointed = (e) => stripPoint(e.target.closest && e.target.closest('.lighthouse-btn'));
+        tooltipContainer.addEventListener('mouseover', pointed);
+        tooltipContainer.addEventListener('focusin', pointed);   // the keyboard points at buttons too
+        tooltipContainer.addEventListener('mouseleave', () => stripPoint(null));
+        tooltipContainer.addEventListener('focusout', (e) => { if (!tooltipContainer.contains(e.relatedTarget)) stripPoint(null); });
     }
 
     // --- INITIALIZATION ---
@@ -99,6 +250,7 @@
             attrs: { id: TOOLTIP_ID, role: 'tooltip' }
         });
         shadowRoot.appendChild(tooltipContainer);
+        watchStrip();
     }
 
     // --- MAIN RENDER LOOP ---
@@ -161,7 +313,10 @@
             tooltipContainer.appendChild(moreBtn);
         }
 
-        // 4. Show
+        // 4. Strip (a row of the bar, so positioning and popovers already account for it)
+        buildStrip(apiCtx, settings.showLabels === false, activeActions[0] && activeActions[0].label);
+
+        // 5. Show
         updatePosition(ctx);
         void tooltipContainer.offsetWidth;
         tooltipContainer.classList.add('visible');
@@ -286,33 +441,24 @@
             sync();
         }
 
+        // A label worked out for this selection: text, or { quote } shown as a quoted value (Paste)
         if (typeof def.dynamicLabel === 'function') {
-            const res = def.dynamicLabel(ctx);
-            if (res instanceof Promise) {
-                res.then(val => { if (val) btn.querySelector('.lighthouse-label').textContent = val; });
-            } else if (res) {
-                btn.querySelector('.lighthouse-label').textContent = res;
-            }
+            Promise.resolve(def.dynamicLabel(ctx, tools)).then(val => {
+                const label = btn.querySelector('.lighthouse-label');
+                if (!val || !label) return;
+                if (typeof val === 'string') return void (label.textContent = val);
+                if (val.quote) { label.textContent = `"${val.quote}"`; btn.classList.add('text-only-btn', 'is-quote'); }
+            }).catch(() => {});
         }
-
-        if (def.id === 'paste') {
-            tools.readClipboard().then(text => {
-                if (text && text.trim().length > 0) {
-                    const clean = text.replace(/\n/g, ' ').trim();
-                    const display = $.shorten(clean, 20);
-                    btn.innerHTML = '';
-                    btn.className = 'lighthouse-paste-btn';
-                    btn.appendChild($.create('span', { text: `"${display}"` }));
-                }
-            });
-        }
+        if (def.info) btn._info = () => def.info(ctx, tools);
 
         btn.onmousedown = async (e) => {
             e.preventDefault(); e.stopPropagation();
             if (def.keepOpen) actionActive = true;
 
             const res = await def.execute(ctx, tools);
-            if (res && res.message) showToast(res.message, res.success ? 'success' : 'error');
+            // Feedback: in the strip while the bar stays open; a toast when the bar is closing
+            if (res && res.message && !(def.keepOpen && stripNotice(res.message))) showToast(res.message, res.success ? 'success' : 'error');
 
             if (!def.keepOpen) {
                 destroy();
@@ -321,6 +467,7 @@
             } else {
                 const now = (ctx.isInput || ctx.hasText) && tools.surface.read();
                 if (now) ctx.text = now.text;
+                redescribe(btn);
                 setTimeout(() => actionActive = false, 200);
             }
         };
@@ -469,6 +616,7 @@
         // The mode changes what the bar shows, so it's applied before measuring
         MODE_CLASSES.forEach(c => tooltipContainer.classList.toggle(c, c === `mode-${mode}`));
         const TOOLTIP_W = tooltipContainer.offsetWidth || 220;
+        fitStrip();   // the bar's final width was just measured: reading the strip now costs no extra layout
         const originPoint = anchorLeft;
         // Centered on its anchor, kept on screen, at a whole pixel
         const left = Math.round(Math.max(MARGIN, Math.min(anchorLeft - TOOLTIP_W / 2, VIEW_W - TOOLTIP_W - MARGIN)));
@@ -554,6 +702,7 @@
 
     function destroy() {
         $.frame.cancel('bar');   // hidden before it could appear
+        clearStrip();
         if (window.LighthouseInput) window.LighthouseInput.deactivate('bar');
         destroyCallbacks.forEach(cb => cb());
         if (tooltipContainer && tooltipContainer.classList.contains('visible')) {

@@ -93,18 +93,22 @@
 
             return parseFloat(clean.replace(sep, '.'));
         },
-        // The one way to get a currency rate. The background caches rates for a day; this
-        // in-page cache avoids a message per price when converting a whole page.
-        fetchRate: (base, target) => {
-            if (base === target) return Promise.resolve(1);
+        // The one way to get a currency rate: { rate, asOf } (when the rates were fetched), or null.
+        // The background caches rates for a day; this in-page cache avoids a message per price
+        // when converting a whole page.
+        rate: (base, target) => {
+            if (base === target) return Promise.resolve({ rate: 1, asOf: null });
             const key = `${base}>${target}`;
             const hit = rateCache.get(key);
             if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.promise;
-            const promise = global.LighthouseUtils.message('GET_RATE', { base, target }).then(res => res && res.success ? res.rate : null)
-                .then(rate => { if (rate === null) rateCache.delete(key); return rate; });
+            const promise = global.LighthouseUtils.message('GET_RATE', { base, target })
+                .then(res => res && res.success ? { rate: res.rate, asOf: res.asOf || null } : null)
+                .then(found => { if (!found) rateCache.delete(key); return found; });
             rateCache.set(key, { at: Date.now(), promise });
             return promise;
         },
+        // Just the number, from the same request
+        fetchRate: (base, target) => MathLib.rate(base, target).then(found => found && found.rate),
         // Currency and unit keys as regex alternatives, built once (CURRENCY_MAP and UNIT_CONVERSIONS don't change)
         patterns: () => patterns || (patterns = {
             currencyKeys: Object.keys(global.LighthouseData.CURRENCY_MAP).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),

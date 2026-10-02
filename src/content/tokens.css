@@ -35,7 +35,11 @@
     --so-icon-size: 14px;
     --so-icon-stroke: 1.75;
     --so-icon-gap: 6px;          /* between an icon and its label */
-    --so-label-delay: 350ms;     /* icon-only mode: how long before a hovered button shows its label */
+    --so-label-delay: 350ms;     /* how long a button is pointed at before the strip describes it */
+    --so-strip-grace: 300ms;     /* how long the strip keeps describing a button after the pointer leaves */
+    --so-notice-duration: 1500ms; /* how long feedback stays in the strip */
+    --so-strip-height: 14px;     /* the strip: a row of the bar, its status line */
+    --so-strip-font: 10px;
     --so-icon-only-button: 30px; /* icon-only mode: buttons are squares this size (the icon carries all the meaning) */
     --so-icon-only-icon: 16px;
     --so-group-gap: 6px;         /* extra space after the identity part (quote, link) */

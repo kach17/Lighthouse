@@ -414,9 +414,10 @@
 
                             const newCtx = SelLib.getContext();
                             const languageCheck = window.LighthouseLanguage ? window.LighthouseLanguage.inspect(newCtx) : Promise.resolve({ foreign: null, language: null });
-                            languageCheck.then(({ foreign, language }) => {
+                            languageCheck.then(({ foreign, language, reliable }) => {
                                 newCtx.foreign = foreign;
                                 newCtx.language = language;
+                                newCtx.languageReliable = reliable === true;
                                 State.update(newCtx);
                                 if (window.LighthouseUI) window.LighthouseUI.render(State);
                             });

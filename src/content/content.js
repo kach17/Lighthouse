@@ -331,9 +331,10 @@
             // Decided once per selection, on-device (at most a few ms): the text's language, and
             // whether it is foreign to the user
             if (window.LighthouseLanguage) {
-                const { foreign, language } = await window.LighthouseLanguage.inspect(ctx);
+                const { foreign, language, reliable } = await window.LighthouseLanguage.inspect(ctx);
                 ctx.foreign = foreign;
                 ctx.language = language;
+                ctx.languageReliable = reliable === true;
                 if (SelLib.getContext().text !== ctx.text) return;   // changed meanwhile (e.g. already deleted)
             }
 

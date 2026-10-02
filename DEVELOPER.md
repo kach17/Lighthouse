@@ -79,13 +79,20 @@ src/
         tools.copy(ctx.text);
         return { success: true, message: 'Done' };
     },
-    preview: (ctx, tools) => {         // optional, shown on hover
+    preview: (ctx, tools) => {         // optional, shown on hover: the result
         return { previewText: '...' };
-    }
+    },
+    info: (ctx, tools) => 'In German'  // optional, shown in the strip: a decision, never the result
 }
 ```
 
 `keepOpen: true` keeps the tooltip open after execute - useful for actions the user might repeat like Case toggle.
+
+`dynamicLabel(ctx, tools)` (optional) works out the label for this selection: text, or `{ quote }` to show a value instead (Paste shows the clipboard text).
+
+`info(ctx, tools)` (optional) returns a short line, or a promise of one, for the strip: what Lighthouse decided for this action, which neither the label nor the preview shows (the languages Translate used, how old Convert's rate is, which engine Search opens). It is asked only when the button is pointed at, once per render (again after a `keepOpen` execute). It uses only local work or the same requests its preview makes, which the shared cache answers once; it never makes a request of its own. When a decision is made inside `execute`, move it into a helper both use (`spokenLanguage`, `nextCase`).
+
+**Tools return their decisions with their results:** `tools.rate()` gives `{ rate, asOf }`, `translate` its `sourceLang` and `targetLang`, `define` the `language` the word was read as, `spellcheck` the `language` it was checked as. A new tool should do the same rather than hide what it chose.
 
 The background script automatically migrates new actions into existing users' settings. You don't need to touch migration.
 
@@ -97,7 +104,8 @@ Each exists once; use it rather than writing another.
 
 | Need | Use |
 |---|---|
-| Ask the background worker | `LighthouseUtils.message()` (`asyncQuery` in `api.js` unwraps it) |
+| Ask the background worker | `LighthouseUtils.message()` (`asyncQuery` in `api.js` unwraps it, and caches answers so preview, info and execute share one request) |
+| A language's name | `LighthouseUtils.languageName('de')` ("German") |
 | Words or sentences | `LighthouseUtils.segmenter('word' \| 'sentence')` |
 | A token in JavaScript (px, ms) | `LighthouseUtils.token('--so-duration', 200)` |
 | Shorten text for display | `LighthouseUtils.shorten(text, max)` |

@@ -24,6 +24,23 @@
     const wikiLanguage = async (ctx) => ctx.language || (global.LighthouseLanguage && await global.LighthouseLanguage.languageOf(ctx.text))
         || String(getStandards().language || 'en').split('-')[0];
 
+    // Read aloud: the text's own language, then the page's, then the user's
+    const spokenLanguage = async (ctx) => ctx.language || (global.LighthouseLanguage && await global.LighthouseLanguage.languageOf(ctx.text))
+        || document.documentElement.lang || getStandards().language || 'en';
+
+    // Case cycles UPPER -> lower -> Title -> UPPER
+    function nextCase(t) {
+        if (t === t.toUpperCase()) return { name: 'lowercase', apply: (s) => s.toLowerCase() };
+        if (t === t.toLowerCase()) return { name: 'Title Case', apply: (s) => s.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase()) };
+        return { name: 'UPPERCASE', apply: (s) => s.toUpperCase() };
+    }
+
+    // Convert: when the rate is from (today: the time, else the day)
+    const rateAge = (at) => {
+        const d = new Date(at), today = new Date().toDateString() === d.toDateString();
+        return 'rate from ' + (today ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { day: 'numeric', month: 'short' }));
+    };
+
     // Spelling: the selection plus the sentence around it, never more than this
     const SPELL_MAX = 500;
     function spellWindow(ctx) {
@@ -442,6 +459,10 @@
             category: 'selection',
             icon: 'search',
             condition: (ctx) => ctx.hasText && !ctx.isLink,
+            info: () => {
+                const engine = (getSettings().searchEngines || []).find(e => e.enabled);
+                return engine ? `Search with ${engine.name}` : null;
+            },
             execute: (ctx) => {
                 const engines = getSettings().searchEngines?.filter(e => e.enabled) || [];
                 if(engines.length === 0) return { success: false, message: 'No search engines are on' };
@@ -474,8 +495,15 @@
                 ctx.tools.open(buildUrl(`https://translate.google.com/?sl=auto&tl=${tl}&text=%s&op=translate`, ctx.text));
                 return { success: true };
             },
+            // The languages it was read as and translated into (from the preview's own request)
+            info: async (ctx, tools) => {
+                const res = await tools.translate(ctx.text);
+                const from = res && res.sourceLang && Utils.languageName(res.sourceLang);
+                const to = res && Utils.languageName(String(res.targetLang || '').split('-')[0]);
+                return from && to && from !== to ? `${from} → ${to}` : null;
+            },
             preview: async (ctx, tools) => {
-                const res = await tools.translate(ctx.text); // { text, sourceLang }
+                const res = await tools.translate(ctx.text); // { text, sourceLang, targetLang }
                 if (!res || !res.text) return { previewText: 'Translation unavailable' };
 
                 const targetLang = (getStandards().language || 'en').split('-')[0];
@@ -496,6 +524,12 @@
                 ctx.tools.open(buildUrl('https://www.google.com/search?q=define+%s', ctx.text));
                 return { success: true };
             },
+            // Which language the word was read as ('Gift': German or English), and if the definition was translated
+            info: async (ctx, tools) => {
+                const res = await tools.define(ctx.cleanText, ctx.language);
+                const as = res && res.definition && res.language && Utils.languageName(res.language);
+                return as ? `${as} word${res.translated ? ' · definition translated' : ''}` : null;
+            },
             preview: async (ctx, tools) => {
                 const res = await tools.define(ctx.cleanText, ctx.language);
                 if (!res) return { previewText: 'Definition unavailable' };
@@ -514,6 +548,10 @@
                 if (!ctx.hasText || ctx.isLink || ctx.isInput) return false;
                 if (ctx.wordCount < 1 || ctx.wordCount > 4) return false;
                 return /^\p{Lu}/u.test(ctx.text.trim());
+            },
+            info: async (ctx) => {
+                const name = Utils.languageName(await wikiLanguage(ctx));
+                return name ? `${name} Wikipedia` : null;
             },
             execute: async (ctx) => {
                 const lang = await wikiLanguage(ctx);
@@ -547,6 +585,10 @@
             condition: (ctx) => ctx.hasText && ('speechSynthesis' in window),
             keepOpen: true,
             isActive: () => window.speechSynthesis.speaking,
+            info: async (ctx) => {
+                const name = Utils.languageName(await spokenLanguage(ctx));
+                return name ? `Reads in ${name}` : null;
+            },
             execute: async (ctx) => {
                 const announce = () => window.dispatchEvent(new CustomEvent('lighthouse:state'));
                 if (window.speechSynthesis.speaking) {
@@ -555,9 +597,7 @@
                     return { success: true, message: 'Stopped reading' };
                 } else {
                     const u = new SpeechSynthesisUtterance(ctx.text);
-                    // The text's own language, then the page's, then the user's
-                    const spoken = ctx.language || (window.LighthouseLanguage && await window.LighthouseLanguage.languageOf(ctx.text));
-                    u.lang = spoken || document.documentElement.lang || getStandards().language || 'en';
+                    u.lang = await spokenLanguage(ctx);
                     u.onstart = u.onend = u.onerror = announce;   // the button follows the speech itself
                     window.speechSynthesis.speak(u);
                     return { success: true };
@@ -575,6 +615,7 @@
                 return { success: true, message: 'Highlighted' };
             },
             // Hover: the colors; the one picked becomes the default
+            info: () => `Highlights in ${getSettings().highlightColor || 'yellow'}`,   // the color a click uses
             preview: (ctx) => ({
                 type: 'menu',
                 items: Data.HIGHLIGHT_COLORS.map(color => ({
@@ -634,6 +675,11 @@
             category: 'input',
             icon: 'paste',
             condition: (ctx) => ctx.isInput,
+            // The clipboard text itself, as a quoted value
+            dynamicLabel: async (ctx, tools) => {
+                const text = (await tools.readClipboard()).replace(/\n/g, ' ').trim();
+                return text ? { quote: Utils.shorten(text, 20) } : null;
+            },
             execute: async (ctx, tools) => {
                 ctx.element.focus();
                 let text = await tools.readClipboard();
@@ -693,13 +739,9 @@
             icon: 'case',
             condition: (ctx) => ctx.hasText && ctx.isInput,
             keepOpen: true,
+            info: (ctx) => `Next: ${nextCase(ctx.text).name}`,
             execute: (ctx, tools) => {
-                const t = ctx.text;
-                let next;
-                if (t === t.toUpperCase()) next = t.toLowerCase();
-                else if (t === t.toLowerCase()) next = t.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase());
-                else next = t.toUpperCase();
-                tools.replace(next, { select: true });
+                tools.replace(nextCase(ctx.text).apply(ctx.text), { select: true });
                 return { success: true };
             }
         },
@@ -713,11 +755,19 @@
                 return ctx.canType && ctx.hasText && ctx.hasLetter && ctx.cleanText.length <= SPELL_MAX;
             },
             execute: () => ({ success: true, message: 'Hover for suggestions' }),
+            // The language it was checked as (LanguageTool's answer, from the preview's own request)
+            info: async (ctx, tools) => {
+                const win = spellWindow(ctx);
+                const res = win && await tools.spellcheck(win.text, ctx.language);
+                const as = res && res.language && Utils.languageName(res.language, { region: true });   // British vs American spelling
+                return as ? `Checked as ${as}` : null;
+            },
             preview: async (ctx, tools) => {
                 const win = spellWindow(ctx);
                 if (!win) return null;
-                const issues = await tools.spellcheck(win.text, ctx.language);
-                if (!issues) return { previewText: 'Spelling check unavailable' };
+                const res = await tools.spellcheck(win.text, ctx.language);
+                if (!res) return { previewText: 'Spelling check unavailable' };
+                const issues = res.issues;
 
                 // Only what lies inside the selection; the sentence is there for context
                 const selected = win.text.slice(win.from, win.to);
@@ -795,6 +845,14 @@
                     }
                 }
                 return null;
+            },
+            // The rate it uses, and when it is from (rates are kept for a day)
+            info: async (ctx, tools) => {
+                const parsed = getParsed(ctx, 'currency');
+                const target = getStandards().currency || 'USD';
+                const found = parsed && parsed.base !== target && await tools.rate(parsed.base, target);
+                if (!found) return null;
+                return `1 ${parsed.base} = ${found.rate.toLocaleString(undefined, { maximumSignificantDigits: 5 })} ${target}` + (found.asOf ? ` · ${rateAge(found.asOf)}` : '');
             },
             execute: (ctx) => {
                 ctx.tools.open(buildUrl('https://www.google.com/search?q=%s+convert', ctx.text));

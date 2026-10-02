@@ -63,15 +63,15 @@
 /* ---------- Buttons ---------- */
 .lighthouse-swatch { width: 14px; height: 14px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.15); }
 .lighthouse-btn.is-current .lighthouse-swatch { box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.15), 0 0 0 2px var(--so-surface), 0 0 0 3.5px var(--so-ink-sub); }
-.lighthouse-btn, .lighthouse-paste-btn {
+.lighthouse-btn {
   position: relative; display: inline-flex; align-items: center; flex: none; gap: var(--so-icon-gap);
   height: var(--so-btn-height); padding: 0 var(--so-btn-pad-x); box-sizing: border-box;
   border: 0; border-radius: var(--so-btn-radius); background: transparent; color: inherit;
   font: inherit; white-space: nowrap; cursor: pointer;
   transition: background-color var(--so-duration) var(--so-ease);
 }
-.lighthouse-btn:hover, .lighthouse-paste-btn:hover { background: var(--so-level-hover); }
-.lighthouse-btn:active, .lighthouse-paste-btn:active { background: var(--so-level-engaged); }
+.lighthouse-btn:hover { background: var(--so-level-hover); }
+.lighthouse-btn:active { background: var(--so-level-engaged); }
 /* The thread: a button with its popover open is made of the popover's tone */
 .lighthouse-btn:has(> .lighthouse-popover.visible) { background: var(--so-level-engaged); }
 /* Chosen among siblings (active tab, selected theme): same tone as an open popover */
@@ -79,7 +79,7 @@
 /* A toggle that is on (e.g. Read aloud playing) inverts */
 .lighthouse-btn.is-active, .lighthouse-btn.is-active:hover { background: var(--so-ink); color: var(--so-level-surface); }
 
-.lighthouse-btn > svg, .lighthouse-btn > img, .lighthouse-paste-btn > svg {
+.lighthouse-btn > svg, .lighthouse-btn > img {
   width: var(--so-icon-size); height: var(--so-icon-size); flex: none; pointer-events: none;
   stroke-width: var(--so-icon-stroke);
 }
@@ -88,7 +88,8 @@
 
 .text-only-btn > svg, .text-only-btn > img { display: none; }
 
-.lighthouse-paste-btn > span { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--so-ink-sub); font-weight: 400; }
+/* A label shown as a quoted value (Paste's clipboard text) */
+.lighthouse-btn.is-quote > .lighthouse-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--so-ink-sub); font-weight: 400; }
 
 /* Hover bridge across the gap to a popover */
 .lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: calc(var(--so-level-offset) + 2px); bottom: 100%; }
@@ -96,8 +97,8 @@
 :is(#lighthouse-extension-tooltip, .lighthouse-ghost).mode-sticky-top .lighthouse-btn.has-popover::after { bottom: auto; top: 100%; }
 
 /* ---------- Icon-only mode (labels off) ----------
-   Buttons become squares; each label becomes a small hover label made of the same material,
-   so nothing is lost (e.g. Convert's value). Text-only buttons keep their text. */
+   Buttons become squares; the strip shows each button's label while it is pointed at, so
+   nothing is lost (e.g. Convert's value). Text-only buttons keep their text. */
 :is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-labels="off"] {
   height: calc(var(--so-icon-only-button) + 2 * var(--so-pad));
 
@@ -105,23 +106,45 @@
     width: var(--so-icon-only-button); height: var(--so-icon-only-button); padding: 0; justify-content: center;
 
     & > svg, & > img { width: var(--so-icon-only-icon); height: var(--so-icon-only-icon); }
-    & > .lighthouse-label {
-      position: absolute; left: 50%; bottom: calc(100% + var(--so-level-offset));
-      padding: 5px var(--so-space-4); border-radius: var(--so-btn-radius);
-      background: var(--so-surface); color: var(--so-ink); box-shadow: var(--so-shadow);
-      font-size: calc(var(--so-font-size) - 1px); white-space: nowrap; z-index: var(--so-z-popover);
-      opacity: 0; transform: translateX(-50%) translateY(2px);
-      transition: opacity var(--so-duration-out) var(--so-ease), transform var(--so-duration-out) var(--so-ease);
-    }
-    &:hover > .lighthouse-label {
-      opacity: 1; transform: translateX(-50%);
-      transition-duration: var(--so-duration); transition-delay: var(--so-label-delay);
-    }
+    & > .lighthouse-label { display: none; }
   }
-  /* An open popover replaces the hover label */
-  & .lighthouse-btn:has(> .lighthouse-popover.visible) > .lighthouse-label { opacity: 0; transition-delay: 0s; }
-  /* Bar below the selection: hover labels open downward, away from the text */
-  &.mode-bottom .lighthouse-btn:not(.text-only-btn) > .lighthouse-label { bottom: auto; top: calc(100% + var(--so-level-offset)); }
+}
+
+/* ---------- Strip: the bar's status line ----------
+   A row of the bar itself, on the side away from the selection, set off by a hairline in the
+   bar's hover tone. It never widens the bar. */
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-strip="on"] { height: auto; flex-wrap: wrap; row-gap: 0; }
+.lighthouse-strip {
+  flex: 0 0 calc(100% + 2 * var(--so-pad)); box-sizing: border-box; contain: inline-size; display: grid; align-items: center; order: -1;   /* edge to edge */
+  height: var(--so-strip-height); margin: calc(-1 * var(--so-pad)) calc(-1 * var(--so-pad)) var(--so-pad);
+  padding: 0 var(--so-btn-pad-x); border-bottom: 1px solid var(--so-level-hover);
+  color: var(--so-ink-sub); font-size: var(--so-strip-font); line-height: 1; font-weight: 400;
+  text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums;   /* counts change without shifting */
+  pointer-events: none;
+  /* Two stacked layers, so a change of subject crossfades; within one, the text swaps at once */
+  & > span { grid-area: 1 / 1; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--so-duration) var(--so-ease); }
+  & > span.is-shown { opacity: 1; }
+}
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost):is(.mode-bottom, .mode-sticky-top) > .lighthouse-strip {
+  order: 1; margin: var(--so-pad) calc(-1 * var(--so-pad)) calc(-1 * var(--so-pad));
+  border-bottom: 0; border-top: 1px solid var(--so-level-hover);
+}
+/* The strip is part of the bar: popovers of the bar's own buttons form beyond its outer edge,
+   strip included, and their hover bridges span the strip */
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-strip="on"] { --lh-strip-row: calc(var(--so-strip-height) + 1px); }
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost):is(.mode-top, .mode-sticky-bottom) > .lighthouse-btn {
+  &.has-popover::after { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
+  & > .lighthouse-popover:not(.mode-bottom) {
+    bottom: calc(100% + var(--so-level-offset) + var(--lh-strip-row, 0px));
+    &::before { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
+  }
+}
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost):is(.mode-bottom, .mode-sticky-top) > .lighthouse-btn {
+  &.has-popover::after { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
+  & > .lighthouse-popover.mode-bottom {
+    top: calc(100% + var(--so-level-offset) + var(--lh-strip-row, 0px));
+    &::before { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
+  }
 }
 
 /* ---------- Identity: quoted selection ---------- */

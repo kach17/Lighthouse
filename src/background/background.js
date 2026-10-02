@@ -230,10 +230,11 @@ const getStorageLocal = (key) => new Promise((resolve) => chrome.storage.local.g
 const setStorageLocal = (obj) => new Promise((resolve) => chrome.storage.local.set(obj, resolve));
 
 // Rates are per 1 USD. A currency missing from them (or an unusable value) is a failure, never NaN.
-function rateResponse(rates, base, target) {
+// asOf: when the rates were fetched (they are kept for a day)
+function rateResponse(rates, base, target, asOf) {
     const perUsd = (code) => code === 'USD' ? 1 : parseFloat(rates && rates[code]);
     const rate = perUsd(target) / perUsd(base);
-    return Number.isFinite(rate) && rate > 0 ? { success: true, rate } : { success: false, error: 'Rate unavailable' };
+    return Number.isFinite(rate) && rate > 0 ? { success: true, rate, asOf } : { success: false, error: 'Rate unavailable' };
 }
 
 async function handleGetRate(base, target, sendResponse) {
@@ -243,14 +244,14 @@ async function handleGetRate(base, target, sendResponse) {
         const now = Date.now();
 
         if (cached && cached.timestamp && (now - cached.timestamp < CACHE_DURATION)) {
-            return sendResponse(rateResponse(cached.rates, base, target));
+            return sendResponse(rateResponse(cached.rates, base, target, cached.timestamp));
         }
 
         _fetch('https://api.coinbase.com/v2/exchange-rates?currency=USD', (res) => {
             if (!res.success) return sendResponse(res);
             const rates = res.result && res.result.data && res.result.data.rates;
             if (rates) setStorageLocal({ [RATES_CACHE_KEY]: { timestamp: now, rates } });   // never cache a malformed reply
-            sendResponse(rateResponse(rates, base, target));
+            sendResponse(rateResponse(rates, base, target, now));
         }, JSON.parse);
     } catch (error) {
         sendResponse({ success: false, error: error.message });
@@ -262,7 +263,8 @@ async function translateText(text, targetLang = 'en') {
     const data = JSON.parse(await gatewayFetch(url));
     return {
         text: data?.[0]?.map(part => part[0]).join('') || '',
-        sourceLang: data?.[2] || null // Google returns the detected source lang here
+        sourceLang: data?.[2] || null,   // Google returns the detected source lang here
+        targetLang
     };
 }
 
@@ -300,10 +302,11 @@ async function handleDefine(text, wordLang, targetLang, readerLangs, sendRespons
             .map(d => decodeEntities((d.definition || '').replace(/<[^>]+>/g, '')).trim())
             .find(Boolean);
         if (!definition) continue;
-        if (readers.has('en')) return sendResponse({ success: true, result: { definition, translated: false, link } });
+        // language: which language the word was read as (its entry), e.g. 'Gift' as German or English
+        if (readers.has('en')) return sendResponse({ success: true, result: { definition, translated: false, language: key, link } });
         try {
             const t = await translateText(definition, target);
-            if (t.text) return sendResponse({ success: true, result: { definition: t.text, translated: true, link } });
+            if (t.text) return sendResponse({ success: true, result: { definition: t.text, translated: true, language: key, link } });
         } catch (e) { /* fall through to the link */ }
         return sendResponse({ success: true, result: { definition: null, link } });
     }
@@ -328,13 +331,15 @@ async function checkText(text, language) {
     const params = new URLSearchParams({ text, language });
     if (language === 'auto') params.set('preferredVariants', Object.keys(LT_VARIANTS).map(ltVariant).join(','));
     const data = JSON.parse(await gatewayFetch('https://api.languagetool.org/v2/check', { post: params.toString() }));
-    return (data.matches || [])
+    // { issues, language }: the language it was checked as (LanguageTool's own answer, also when detecting)
+    const issues = (data.matches || [])
         .filter(m => m.rule && (LT_KEEP_TYPES.has(m.rule.issueType) || LT_KEEP_CATEGORIES.has(m.rule.category && m.rule.category.id)))
         .map(m => ({
             offset: m.offset, length: m.length,
             message: m.shortMessage || m.message || '',
             replacements: (m.replacements || []).slice(0, 3).map(r => r.value)
         }));
+    return { issues, language: (data.language && data.language.code) || null };
 }
 
 async function handleSpellcheck(text, language, sendResponse) {
