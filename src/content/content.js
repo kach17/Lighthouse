@@ -118,6 +118,17 @@
         Input.on({ type: 'beforeinput', scope: 'editable', inManagedEditors: true, handler: stepAway });
         Input.on({ type: 'keydown', scope: 'editable', inManagedEditors: true, keys: ['Backspace', 'Delete'], handler: stepAway });
 
+        // Leaving a field (clicking elsewhere, Tab): coming back is a first click again, which shows the
+        // bar; clicks while staying in the field still don't
+        Input.on({
+            type: 'focusout', scope: 'editable', inManagedEditors: true,
+            handler: (e) => {
+                const field = State.lastFocusedInput;
+                if (field && !(e.relatedTarget && field.contains(e.relatedTarget))) State.lastFocusedInput = null;
+                return false;
+            }
+        });
+
         // Typing in a field: snippet detection, and the bar steps away
         Input.on({
             type: 'input', scope: 'editable', inManagedEditors: true,

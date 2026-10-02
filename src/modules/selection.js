@@ -52,17 +52,25 @@
     // text alone (a range's own box spans whole list items it contains). null for very large selections.
     // Measured once per frame for the same selection: the bar and both handles ask for it on every scroll
     let extentCache = null;
-    function visibleExtent(sel = getActiveSelection()) {
+    function visibleExtent(sel = getActiveSelection(), spaces = false) {   // spaces: see measureExtent
         const range = sel && sel.rangeCount && sel.getRangeAt(0);
         if (!range) return null;
-        const key = [range.startContainer, range.startOffset, range.endContainer, range.endOffset];
+        const key = [range.startContainer, range.startOffset, range.endContainer, range.endOffset, spaces];
         if (extentCache && key.every((k, i) => k === extentCache.key[i])) return extentCache.value;
         if (!extentCache) requestAnimationFrame(() => { extentCache = null; });
-        extentCache = { key, value: measureExtent(range) };
+        extentCache = { key, value: measureExtent(range, spaces) };
         return extentCache.value;
     }
 
-    function measureExtent(range) {
+    // A space the browser paints within a line (one a Windows double-click takes after a word): it has a box,
+    // and the characters beside it share its line (a space at a line break does not: a caret after it shows below)
+    function painted(n, i) {
+        const box = (k) => { const c = document.createRange(); c.setStart(n, k); c.setEnd(n, k + 1); return [...c.getClientRects()].find(q => q.width > 0); };
+        const own = /\s/.test(n.data[i]) && box(i);
+        return !!own && [i - 1, i + 1].every(k => { const q = k >= 0 && k < n.length && box(k); return !q || Math.abs(q.top - own.top) < 1; });
+    }
+
+    function measureExtent(range, spaces) {
         const trimmed = range.cloneRange(), w = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
         let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity, count = 0;
         for (let n = w.currentNode.nodeType === 3 ? w.currentNode : w.nextNode(); n; n = w.nextNode()) {
@@ -73,6 +81,10 @@
             const part = document.createRange();
             part.setStart(n, from + text.search(/\S/));
             part.setEnd(n, from + text.trimEnd().length);
+            if (spaces) for (const edge of [true, false]) {   // the handles: also a space painted on its line
+                const i = edge ? part.startOffset - 1 : part.endOffset, q = i >= from && i < from + text.length && painted(n, i);
+                if (q) edge ? part.setStart(n, i) : part.setEnd(n, i + 1);
+            }
             const rects = [...part.getClientRects()].filter(q => q.width);
             if (!rects.length) continue;   // hidden text
             if (l === Infinity) trimmed.setStart(n, part.startOffset);

@@ -161,7 +161,7 @@
         if (!sel || !sel.rangeCount) return null;
         
         // Where the selection visibly starts or ends (not a line's end or the space between blocks)
-        const ext = window.LighthouseSelection.visibleExtent(sel);
+        const ext = window.LighthouseSelection.visibleExtent(sel, true);   // where it's painted, spaces included
         const range = (ext ? ext.range : sel.getRangeAt(0)).cloneRange();
         range.collapse(atStart);
         

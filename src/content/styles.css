@@ -89,7 +89,7 @@
 .text-only-btn > svg, .text-only-btn > img { display: none; }
 
 /* A label shown as a quoted value (Paste's clipboard text) */
-.lighthouse-btn.is-quote > .lighthouse-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--so-ink-sub); font-weight: 400; }
+.lighthouse-btn.is-quote > .lighthouse-label { --lh-pan-width: 220px; max-width: var(--lh-pan-width); overflow: hidden; color: var(--so-ink-sub); font-weight: 400; }
 
 /* Hover bridge across the gap to a popover */
 .lighthouse-btn.has-popover::after { content: ''; position: absolute; left: 0; width: 100%; height: calc(var(--so-level-offset) + 2px); bottom: 100%; }
@@ -106,7 +106,7 @@
     width: var(--so-icon-only-button); height: var(--so-icon-only-button); padding: 0; justify-content: center;
 
     & > svg, & > img { width: var(--so-icon-only-icon); height: var(--so-icon-only-icon); }
-    & > .lighthouse-label { display: none; }
+    & > .lighthouse-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }   /* unseen, still the button's name */
   }
 }
 
@@ -129,23 +129,15 @@
   order: 1; margin: var(--so-pad) calc(-1 * var(--so-pad)) calc(-1 * var(--so-pad));
   border-bottom: 0; border-top: 1px solid var(--so-level-hover);
 }
-/* The strip is part of the bar: popovers of the bar's own buttons form beyond its outer edge,
-   strip included, and their hover bridges span the strip */
-:is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-strip="on"] { --lh-strip-row: calc(var(--so-strip-height) + 1px); }
-:is(#lighthouse-extension-tooltip, .lighthouse-ghost):is(.mode-top, .mode-sticky-bottom) > .lighthouse-btn {
-  &.has-popover::after { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
-  & > .lighthouse-popover:not(.mode-bottom) {
-    bottom: calc(100% + var(--so-level-offset) + var(--lh-strip-row, 0px));
-    &::before { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
-  }
+/* The strip is part of the bar: on its side, the bar's own buttons are one strip row further from
+   the bar's edge, so their popovers and hover bridges (all placed by --so-level-offset) reach past it.
+   Not for popovers that flipped to the other side, nor anything nested inside a popover. */
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-strip="on"] > .lighthouse-btn {
+  --so-level-offset: calc(var(--so-pad) + var(--so-level-space) + var(--so-strip-height) + 1px);
 }
-:is(#lighthouse-extension-tooltip, .lighthouse-ghost):is(.mode-bottom, .mode-sticky-top) > .lighthouse-btn {
-  &.has-popover::after { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
-  & > .lighthouse-popover.mode-bottom {
-    top: calc(100% + var(--so-level-offset) + var(--lh-strip-row, 0px));
-    &::before { height: calc(var(--so-level-offset) + var(--lh-strip-row, 0px) + 2px); }
-  }
-}
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-strip="on"]:is(.mode-top, .mode-sticky-bottom) > .lighthouse-btn > .lighthouse-popover.mode-bottom,
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-strip="on"]:is(.mode-bottom, .mode-sticky-top) > .lighthouse-btn > .lighthouse-popover:not(.mode-bottom),
+.lighthouse-popover .lighthouse-btn { --so-level-offset: calc(var(--so-pad) + var(--so-level-space)); }
 
 /* ---------- Identity: quoted selection ---------- */
 :is(#lighthouse-extension-tooltip, .lighthouse-ghost) > .lighthouse-preview {
@@ -195,10 +187,10 @@
           mask-image: linear-gradient(to right, #000 calc(100% - var(--so-fade-width)), transparent);
 }
 .lighthouse-scroll-text { display: inline-block; }
-.lighthouse-preview:hover .lighthouse-scroll-text { animation: lighthouse-pan 4s linear infinite alternate; animation-delay: 0.5s; }
+:is(.lighthouse-preview, .lighthouse-btn):hover .lighthouse-scroll-text { animation: lighthouse-pan 5s linear infinite; animation-delay: 0.5s; }
 @keyframes lighthouse-pan {
-  0%, 15% { transform: translateX(0); }
-  100% { transform: translateX(min(0px, calc(-100% + var(--so-preview-width) - 24px))); }
+  0%, 25% { transform: translateX(0); }   /* a pause at the front, then forward; each round starts at the front again */
+  100% { transform: translateX(min(0px, calc(-100% + var(--lh-pan-width, calc(var(--so-preview-width) - 24px))))); }   /* to the end of what is visible */
 }
 
 /* Answers: computed or fetched values get their own voice */
@@ -413,5 +405,5 @@ textarea.lh-field { height: auto; padding: var(--so-space-4) var(--so-space-5); 
 
 @media (prefers-reduced-motion: reduce) {
   #lighthouse-extension-tooltip, .lighthouse-popover, .lighthouse-toast { transition-property: opacity !important; animation: none !important; }
-  .lighthouse-preview:hover .lighthouse-scroll-text { animation: none; }
+  :is(.lighthouse-preview, .lighthouse-btn):hover .lighthouse-scroll-text { animation: none; }
 }

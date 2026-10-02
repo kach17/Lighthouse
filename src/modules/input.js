@@ -34,6 +34,7 @@
         mouseout:        { on: () => document, options: false },
         dragstart:       { on: () => document, options: false },
         selectionchange: { on: () => document, options: false },
+        focusout:        { on: () => document, options: true },
         scroll:          { on: () => global,   options: { capture: true, passive: true } },
         resize:          { on: () => global,   options: { passive: true } },
         blur:            { on: () => global,   options: false }

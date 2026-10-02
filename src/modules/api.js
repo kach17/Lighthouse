@@ -61,24 +61,12 @@
         }
     }
 
-    /**
-     * Asks the background worker; resolves with res[valueKey], or the fallback on failure.
-     * One shared cache for every hook (preview, info, execute): the same question is asked once,
-     * also while it is still being answered. Failures are not kept, so they are asked again.
-     */
-    const answers = new Map();
-    function asyncQuery(action, payload, valueKey = 'result', fallback = null) {
-        const key = `${action}\u0000${JSON.stringify(payload)}`;
-        if (answers.has(key)) return answers.get(key);
-        const answer = $.message(action, payload).then(res => {
-            if (res && res.success) return valueKey ? res[valueKey] : res;
-            answers.delete(key);
-            $.logEvent('API', 'ERROR', res ? res.error : 'No response');
-            return fallback;
-        });
-        answers.set(key, answer);
-        if (answers.size > 40) answers.delete(answers.keys().next().value);
-        return answer;
+    /** Asks the background worker (one shared answer per question); res[valueKey], or the fallback on failure */
+    async function asyncQuery(action, payload, valueKey = 'result', fallback = null) {
+        const res = await $.ask(action, payload);
+        if (res && res.success) return valueKey ? res[valueKey] : res;
+        $.logEvent('API', 'ERROR', res ? res.error : 'No response');
+        return fallback;
     }
 
     /**
@@ -105,6 +93,8 @@
                 onClick: () => window.LighthouseContent && window.LighthouseContent.convertAllOnPage()
             }),
 
+            // A text (translation, definition) with Copy, and any further items
+            textPreview(text, extraItems = []) { return this.buildCopyMenu(text, { node: $.create('div', { className: 'lh-text', text }) }, 'Copy', extraItems); },
             buildCopyMenu: (copyText, previewText = copyText, label = 'Copy', extraItems = []) => {
                 const items = [{
                     label: label,
@@ -164,24 +154,9 @@
             // Network (using Centralized Bridge)
             fetchRate: (base, target) => MathLib.fetchRate(base, target),   // the rate alone
             rate: (base, target) => MathLib.rate(base, target),             // { rate, asOf }, same request
-            translate: (text) => {
-                const s = window.LighthouseState.get('standards', null);
-                return asyncQuery('TRANSLATE', { text, targetLang: s ? s.language : 'en' }, 'result', null);
-                // result shape: { text, sourceLang, targetLang }
-            },
-            // { definition, translated, language, link }: the word's entry (language: the one the word was
-            // read as), in the reader's language when needed
-            define: (text, wordLang) => {
-                const s = window.LighthouseState.get('standards', null);
-                const Lang = window.LighthouseLanguage;
-                const readerLangs = Lang && Lang.userLanguages ? [...Lang.userLanguages()] : [];
-                return asyncQuery('DEFINE', { text, wordLang, targetLang: s ? s.language : 'en', readerLangs }, 'result', null);
-            },
-            // { issues: [{ offset, length, message, replacements }], language } from LanguageTool (language:
-            // the one it was checked as), or null when unavailable
-            spellcheck: (text, language) => asyncQuery('SPELLCHECK', { text, language }, 'result', null),
-            wikiSummary: (lang, title) => asyncQuery('WIKI_SUMMARY', { lang, title }, 'result', null),
-            linkPreview: (url) => asyncQuery('LINK_PREVIEW', { url }, 'result', null),
+            // A background service's result, or null: TRANSLATE, DEFINE, SPELLCHECK, WIKI_SUMMARY, LINK_PREVIEW
+            // (each action builds its own request). One shared answer per question.
+            query: (service, payload) => asyncQuery(service, payload, 'result', null),
 
             // Dates: how numeric dates are written here (worked out once, on first use)
             dateOrder: () => dateOrder || (dateOrder = guessDateOrder()),

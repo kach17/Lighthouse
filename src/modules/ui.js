@@ -59,7 +59,7 @@
     function placePopover(el) {
         const css = getComputedStyle(el);
         const MARGIN = parseFloat(css.getPropertyValue('--so-viewport-margin')) || 0;
-        const GAP = parseFloat(css.getPropertyValue('--so-level-offset')) || 0;
+        const GAP = $.token('--so-pad', 4) + $.token('--so-level-space', 6);   // --so-level-offset (a calc(), unreadable as a number)
         const b = el.parentElement.getBoundingClientRect();
         const w = el.offsetWidth, h = el.offsetHeight;
         let below = /mode-(bottom|sticky-top)/.test(tooltipContainer.className);
@@ -103,7 +103,7 @@
         return null;
     }
 
-    // Most important first: on a narrow bar, as many whole facts as fit are shown (see fitStrip)
+    // Most important first: on a narrow bar, as many whole facts as fit are shown (see show)
     function selectionFacts(ctx) {
         if (!ctx.hasText || !ctx.cleanText) return [];
         const chars = (n) => plural(n, 'character', 'characters');
@@ -111,11 +111,10 @@
         const n = countCharacters(ctx.cleanText.replace(/[\r\n]+/g, ''), (later) => {
             if (!strip) return;
             strip.facts.splice(1, 0, chars(later));
-            strip.idle = '';
-            if (!strip.tool) fitStrip();
+            if (!strip.tool) show(strip.facts);
         });
         if (n !== null) facts.push(chars(n));
-        const language = ctx.languageReliable && ctx.language && $.languageName(ctx.language);
+        const language = ctx.languageReliable && ctx.foreign === true && ctx.language && $.languageName(ctx.language);   // only one the user doesn't read
         if (language) facts.push(language);
         return facts;
     }
@@ -127,34 +126,38 @@
         if (!facts.length && iconOnly && first) facts.push(first);
         tooltipContainer.dataset.strip = facts.length || iconOnly ? 'on' : 'off';
         if (tooltipContainer.dataset.strip === 'off') return;
-        const layers = [$.create('span', { className: 'is-shown', text: facts.join(' · ') }), $.create('span')];
-        strip = { el: $.create('div', { className: 'lighthouse-strip', attrs: { 'aria-hidden': 'true' }, children: layers }), layers, facts, idle: '', tool: false, on: null };
+        const layers = [$.create('span', { className: 'is-shown' }), $.create('span')];
+        strip = { el: $.create('div', { className: 'lighthouse-strip', attrs: { 'aria-hidden': 'true' }, children: layers }), layers, facts, tool: false, on: null };
         tooltipContainer.appendChild(strip.el);
+        show(facts);   // drawn with the bar, once it has its width
     }
 
     function clearStrip() {
         clearTimeout(countTimer);
+        $.frame.cancel('strip');
         if (strip) { clearTimeout(strip.warm); clearTimeout(strip.grace); }
         strip = null;
     }
 
-    // Once the bar has its final width: as many whole facts as fit
-    function fitStrip() {
-        if (!strip || strip.tool || strip.idle) return;   // once (positioning also runs on every scroll)
-        const layer = strip.layers[0], facts = [...strip.facts];
-        layer.textContent = facts.join(' · ');
-        while (facts.length > 1 && layer.scrollWidth > layer.clientWidth) layer.textContent = (facts.pop(), facts.join(' · '));
-        strip.idle = layer.textContent;
+    // The one way the strip changes, through frame.draw: one update per frame, so scanning across
+    // buttons coalesces. parts: facts, most important first (keep 'first': dropped from the end when
+    // they don't fit), or a button's [name, info] (keep 'last': the name goes first). fade: a change
+    // of subject, which crossfades.
+    function show(parts, { fade = false, keep = 'first' } = {}) {
+        const s = strip;
+        $.frame.draw('strip', () => {
+            if (strip !== s) return;
+            if (fade) { s.layers[0].classList.remove('is-shown'); s.layers.reverse(); s.layers[0].classList.add('is-shown'); }
+            const layer = s.layers[0], rest = [...parts];
+            layer.textContent = rest.join(' · ');
+            while (rest.length > 1 && layer.scrollWidth > layer.clientWidth) layer.textContent = (keep === 'first' ? rest.pop() : rest.shift(), rest.join(' · '));
+        });
     }
 
-    // A change of subject: the old text fades out as the new one fades in
-    function stripSay(text, tool) {
-        const [shown, next] = strip.layers;
-        next.textContent = text;
-        shown.classList.remove('is-shown');
-        next.classList.add('is-shown');
-        strip.layers = [next, shown];
-        strip.tool = tool;
+    // Back to the selection's facts, after a delay (the grace period, or a notice's time)
+    function backToFacts(delay) {
+        clearTimeout(strip.grace);
+        strip.grace = setTimeout(() => { if (strip && strip.tool) { strip.tool = false; show(strip.facts, { fade: true }); } }, delay);
     }
 
     // What the strip says about a button: in icon-only mode its name, and what the action reports
@@ -165,47 +168,24 @@
             const label = tooltipContainer.dataset.labels === 'off' && !btn.classList.contains('text-only-btn')
                 && btn.querySelector(':scope > .lighthouse-label');
             const name = label && label.textContent.trim();
+            if (info) btn.setAttribute('aria-description', info);   // the same, for assistive technology
             return [info && name && info.toLowerCase().includes(name.toLowerCase()) ? null : name, info].filter(Boolean);
         });
     }
 
-    // A button's description: name and info if they fit, else the info alone (the icon names the button)
-    function stripTool(parts, fade) {
-        const text = parts.join(' · ');
-        if (fade) stripSay(text, true); else strip.layers[0].textContent = text;
-        const layer = strip.layers[0];
-        if (parts.length > 1 && layer.scrollWidth > layer.clientWidth) layer.textContent = parts[parts.length - 1];
-    }
-
-    // Feedback from an action that keeps the bar open (Read aloud: 'Stopped reading'): in the strip,
-    // for a moment, then back to the button or the selection. False without a strip (then: a toast).
-    function stripNotice(text) {
-        if (!strip) return false;
-        const btn = strip.on;
-        clearTimeout(strip.warm);
-        clearTimeout(strip.grace);
-        stripSay(text, true);
-        strip.on = null;   // pointing again describes afresh
-        strip.grace = setTimeout(() => {
-            if (!strip) return;
-            if (btn && btn.matches(':hover')) return stripPoint(btn);
-            stripSay(strip.idle || strip.facts.join(' · '), false);
-            fitStrip();
-        }, $.token('--so-notice-duration', 1500));
-        return true;
-    }
-
+    // Describes the pointed-at button: after the warm-up, then at once while scanning
     function stripPoint(btn) {
         if (!strip || btn === strip.on) return;
         strip.on = btn;
         clearTimeout(strip.warm);
         clearTimeout(strip.grace);
-        const back = () => { if (strip && strip.tool) strip.grace = setTimeout(() => { if (strip) { stripSay(strip.idle || strip.facts.join(' · '), false); fitStrip(); } }, $.token('--so-strip-grace', 300)); };
-        if (!btn) return back();
+        const grace = $.token('--so-strip-grace', 300);
+        if (!btn) return strip.tool && backToFacts(grace);
         const say = (parts) => {
-            if (!strip || strip.on !== btn) return;   // moved on meanwhile
-            if (!parts.length) return back();         // nothing new here: after the grace period, back to the selection
-            stripTool(parts, !strip.tool);            // scanning: at once
+            if (!strip || strip.on !== btn) return;                         // moved on meanwhile
+            if (!parts.length) return strip.tool && backToFacts(grace);     // nothing new here
+            show(parts, { fade: !strip.tool, keep: 'last' });
+            strip.tool = true;
         };
         if (strip.tool) describe(btn).then(say);
         else strip.warm = setTimeout(() => describe(btn).then(say), $.token('--so-label-delay', 350));
@@ -214,11 +194,23 @@
     // A button that stays open changed what it would do next (Case): described again
     function redescribe(btn) {
         delete btn._described;
-        if (strip && strip.on === btn && strip.tool) describe(btn).then(parts => { if (strip && strip.on === btn && parts.length) stripTool(parts, false); });
+        if (strip && strip.on === btn && strip.tool) describe(btn).then(parts => strip && strip.on === btn && parts.length && show(parts, { keep: 'last' }));
+    }
+
+    // Feedback from an action that keeps the bar open (Read aloud: 'Stopped reading'), for a moment.
+    // False without a strip (then: a toast).
+    function stripNotice(text) {
+        if (!strip) return false;
+        clearTimeout(strip.warm);
+        show([text], { fade: true });
+        strip.tool = true;
+        strip.on = null;   // pointing again describes afresh
+        backToFacts($.token('--so-notice-duration', 1500));
+        return true;
     }
 
     function watchStrip() {
-        const pointed = (e) => stripPoint(e.target.closest && e.target.closest('.lighthouse-btn'));
+        const pointed = (e) => stripPoint(e.target.closest && e.target.closest('.lighthouse-btn, .lighthouse-preview'));
         tooltipContainer.addEventListener('mouseover', pointed);
         tooltipContainer.addEventListener('focusin', pointed);   // the keyboard points at buttons too
         tooltipContainer.addEventListener('mouseleave', () => stripPoint(null));
@@ -326,11 +318,10 @@
 
     function renderTextHeader(ctx) {
         let pTxt = ctx.text.trim();
-        pTxt = $.shorten(pTxt, 100);
+        pTxt = $.excerpt(pTxt, 100);
         
         const previewEl = $.create('div', { 
             className: 'lighthouse-preview',
-            attrs: { title: 'Scroll to selection' },
             style: 'cursor: pointer;',
             children: [ $.create('span', { className: 'lighthouse-scroll-text', text: `"${pTxt}"` }) ],
             events: {
@@ -347,6 +338,7 @@
                 }
             }
         });
+        previewEl._info = () => 'Scroll to selection';   // said in the strip
 
         tooltipContainer.appendChild(previewEl);
     }
@@ -362,7 +354,7 @@
             const cacheKey = `og:${ctx.url}`;
             let html = previewCache.get(cacheKey);
             if (!html) {
-                html = await tools.linkPreview(ctx.url);
+                html = await tools.query('LINK_PREVIEW', { url: ctx.url });
                 if (html) cacheSet(cacheKey, html);
             }
             return html;
@@ -372,7 +364,7 @@
         const linkBtn = createButton({
             id: 'link-open',
             label: $.displayLink(ctx.url),
-            title: `Open ${ctx.url}`,
+            info: () => ctx.url,   // the full address (the label is shortened)
             icon: null,
             iconUrl: ctx.url,
             // With previews on, the page's own icon (from the same fetched <head> the preview uses)
@@ -418,13 +410,21 @@
         if (ctx.isLink) tooltipContainer.appendChild(copyBtn);
     }
 
+    // After an action, from a button or a menu item: the bar closes, and the text is left as after
+    // any edit (a field keeps focus; on the page the selection collapses, revealing e.g. a highlight)
+    function finish(ctx) {
+        destroy();
+        if (ctx.isForm) ctx.element.focus();
+        else if (!ctx.isLink) window.getSelection().collapseToEnd();
+    }
+
     function createButton(def, ctx, tools) {
         let className = 'lighthouse-btn';
         if (def.textOnly) className += ' text-only-btn';
 
         const btn = $.create('button', {
             className: className,
-            attrs: def.title ? { 'data-action': def.id, title: def.title } : { 'data-action': def.id },
+            attrs: { 'data-action': def.id },
             children: [ 
                 $.createSmartIcon(def.icon, def.iconUrl, def.label, def.findIcon),
                 $.create('span', { className: 'lighthouse-label', text: def.label })
@@ -447,7 +447,10 @@
                 const label = btn.querySelector('.lighthouse-label');
                 if (!val || !label) return;
                 if (typeof val === 'string') return void (label.textContent = val);
-                if (val.quote) { label.textContent = `"${val.quote}"`; btn.classList.add('text-only-btn', 'is-quote'); }
+                if (val.quote) {   // one line that pans through the value on hover, like the quoted selection
+                    label.replaceChildren($.create('span', { className: 'lighthouse-scroll-text', text: `"${val.quote}"` }));
+                    btn.classList.add('text-only-btn', 'is-quote');
+                }
             }).catch(() => {});
         }
         if (def.info) btn._info = () => def.info(ctx, tools);
@@ -461,9 +464,7 @@
             if (res && res.message && !(def.keepOpen && stripNotice(res.message))) showToast(res.message, res.success ? 'success' : 'error');
 
             if (!def.keepOpen) {
-                destroy();
-                if (ctx.isForm) ctx.element.focus();
-                else if (!ctx.isLink) window.getSelection().collapseToEnd();
+                finish(ctx);
             } else {
                 const now = (ctx.isInput || ctx.hasText) && tools.surface.read();
                 if (now) ctx.text = now.text;
@@ -488,8 +489,9 @@
                             const sub = $.create('button', {
                                 className: 'lighthouse-btn' + (item.textOnly ? ' text-only-btn' : '') + (item.current ? ' is-current' : ''),
                                 children: [ item.color ? $.create('span', { className: 'lighthouse-swatch', style: `background: var(--lh-hl-${item.color})` }) : $.createSmartIcon(item.icon, item.iconUrl, item.label), $.create('span', { className: 'lighthouse-label', text: item.label }) ],
-                                events: { mousedown: (e) => { e.preventDefault(); e.stopPropagation(); item.onClick(); destroy(); } }
+                                events: { mousedown: (e) => { e.preventDefault(); e.stopPropagation(); item.onClick(); finish(ctx); } }
                             });
+                            if (item.info) sub._info = () => item.info;   // what the strip says while it is pointed at
                             popover.appendChild(sub);
                         });
                     }
@@ -616,7 +618,6 @@
         // The mode changes what the bar shows, so it's applied before measuring
         MODE_CLASSES.forEach(c => tooltipContainer.classList.toggle(c, c === `mode-${mode}`));
         const TOOLTIP_W = tooltipContainer.offsetWidth || 220;
-        fitStrip();   // the bar's final width was just measured: reading the strip now costs no extra layout
         const originPoint = anchorLeft;
         // Centered on its anchor, kept on screen, at a whole pixel
         const left = Math.round(Math.max(MARGIN, Math.min(anchorLeft - TOOLTIP_W / 2, VIEW_W - TOOLTIP_W - MARGIN)));

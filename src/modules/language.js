@@ -108,17 +108,25 @@
         const langs = userLanguages();
         const letters = (text.match(/\p{L}/gu) || []).length;
         const readable = (text.match(readableLetters(langs)) || []).length;
-        if (readable < letters / 2) return { foreign: true, language: null, reliable: false };      // another writing system
+        // A short selection is judged by its paragraph: a few words alone mislead the detector, even when
+        // it claims to be sure (English as Malay). Its own guess still decides when the paragraph can't,
+        // but is never called reliable.
+        const short = text.split(/\s+/).length <= PASSAGE_WORDS;
+        const context = around.length > text.length ? around : '';
+        if (readable < letters / 2) {   // another writing system: foreign for certain, named when the detector is
+            const named = await detect(context || text);   // sure, of a language written in the selection's letters
+            const fits = named && (text.match(readableLetters(new Set([named.language]))) || []).length >= letters / 2;
+            return { foreign: true, language: fits ? named.language : null, reliable: !!(fits && named.reliable && (context || !short)) };
+        }
 
         const found = await detect(text);
         if (found === undefined) return { foreign: null, language: null };         // no detector available
         if (found === null) return { foreign: false, language: null };             // no language: codes, IDs
         const settles = (f) => f && (f.reliable || langs.has(f.language));
-        if (settles(found)) return { foreign: !langs.has(found.language), language: found.language, reliable: found.reliable };
-        if (around.length > text.length) {                                          // unsure: ask the paragraph
-            const ctxFound = await detect(around);
-            if (settles(ctxFound)) return { foreign: !langs.has(ctxFound.language), language: ctxFound.language, reliable: ctxFound.reliable };
-        }
+        const ctxFound = context ? await detect(context) : null;
+        if (ctxFound && ctxFound.reliable) return { foreign: !langs.has(ctxFound.language), language: ctxFound.language, reliable: true };
+        if (settles(found)) return { foreign: !langs.has(found.language), language: found.language, reliable: found.reliable && !short };
+        if (settles(ctxFound)) return { foreign: !langs.has(ctxFound.language), language: ctxFound.language, reliable: false };
         const declared = base(declaredLanguage());                                  // still unsure: what the page says
         if (declared) return { foreign: !langs.has(declared), language: declared, reliable: false };
         return { foreign: null, language: null };                                   // unknown: offer both
@@ -143,7 +151,7 @@
         const around = text.split(/\s+/).length > PASSAGE_WORDS ? '' : ctx.isForm && ctx.element ? ctx.element.value.slice(0, CONTEXT_CHARS) : surroundingText();   // a field: its own text
         const key = `${text}\u0000${around}`;
         if (!cache.has(key)) {
-            cache.set(key, decide(text, around).catch(() => ({ foreign: null, language: null })));
+            cache.set(key, decide(text, wordsOnly(around)).catch(() => ({ foreign: null, language: null })));   // the paragraph's words too: no numbers, codes or links
             if (cache.size > 30) cache.delete(cache.keys().next().value);
         }
         const unknown = { foreign: null, language: null };

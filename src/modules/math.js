@@ -1,5 +1,4 @@
 (function(global) {
-    const rateCache = new Map(); // base>target -> { at, promise }
     let patterns = null;
     const MathLib = {
         /**
@@ -94,19 +93,11 @@
             return parseFloat(clean.replace(sep, '.'));
         },
         // The one way to get a currency rate: { rate, asOf } (when the rates were fetched), or null.
-        // The background caches rates for a day; this in-page cache avoids a message per price
-        // when converting a whole page.
-        rate: (base, target) => {
-            if (base === target) return Promise.resolve({ rate: 1, asOf: null });
-            const key = `${base}>${target}`;
-            const hit = rateCache.get(key);
-            if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.promise;
-            const promise = global.LighthouseUtils.message('GET_RATE', { base, target })
-                .then(res => res && res.success ? { rate: res.rate, asOf: res.asOf || null } : null)
-                .then(found => { if (!found) rateCache.delete(key); return found; });
-            rateCache.set(key, { at: Date.now(), promise });
-            return promise;
-        },
+        // The background keeps rates for a day; asked once per pair per 10 minutes in a page
+        // (a whole-page conversion asks for every price).
+        rate: (base, target) => base === target ? Promise.resolve({ rate: 1, asOf: null })
+            : global.LighthouseUtils.ask('GET_RATE', { base, target }, { maxAge: 10 * 60 * 1000 })
+                .then(res => res && res.success ? { rate: res.rate, asOf: res.asOf || null } : null),
         // Just the number, from the same request
         fetchRate: (base, target) => MathLib.rate(base, target).then(found => found && found.rate),
         // Currency and unit keys as regex alternatives, built once (CURRENCY_MAP and UNIT_CONVERSIONS don't change)

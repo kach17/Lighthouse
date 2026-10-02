@@ -88,11 +88,28 @@ function isAllowedService(url) {
     }
 }
 
-async function gatewayFetch(url, { anyHost = false, timeout = 8000, cutAt = null, post = null, image = false } = {}) {
+// Loopback (localhost) stays reachable from anywhere. A private host is reachable only inside a private
+// network: private and link-local addresses, one-word names, reserved local endings.
+const bare = (host) => host.toLowerCase().replace(/^\[|\]$/g, '');
+const isLoopback = (host) => /^(localhost|127\.|0\.0\.0\.0$|::1$)/.test(bare(host)) || bare(host).endsWith('.localhost');
+function isPrivateHost(host) {
+    const h = bare(host);
+    if (isLoopback(h)) return false;
+    return /^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || /^f(c|d|e[89ab])[0-9a-f]*:/.test(h)
+        || (!h.includes('.') && !h.includes(':')) || /\.(local|internal|lan|home\.arpa)$/.test(h);
+}
+
+// from: the page that asked (anyHost fetches). A public page can't reach into the private network
+// through Lighthouse, not even by a redirect; a local page (intranet, localhost) can.
+async function gatewayFetch(url, { anyHost = false, from = null, timeout = 8000, cutAt = null, post = null, image = false } = {}) {
     let u;
     try { u = new URL(url); } catch (e) { throw new Error('Invalid URL'); }
     if (!['https:', 'http:'].includes(u.protocol)) throw new Error('Unsupported protocol');
     if (!anyHost && !isAllowedService(url)) throw new Error('Not an allowed service');
+    let fromLocal = true;
+    try { const h = new URL(from).hostname; fromLocal = !from || isLoopback(h) || isPrivateHost(h); } catch (e) { /* unknown page: as local */ }
+    const blocked = (target) => anyHost && !fromLocal && isPrivateHost(new URL(target).hostname);
+    if (blocked(u.href)) throw new Error('Private network address');
     if (post !== null && !POST_SERVICES.includes(u.hostname)) throw new Error('Not an allowed service');
 
     const controller = new AbortController();
@@ -102,6 +119,7 @@ async function gatewayFetch(url, { anyHost = false, timeout = 8000, cutAt = null
             ? { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: post, credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal }
             : { method: 'GET', credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        if (blocked(res.url || u.href)) throw new Error('Private network address');   // redirected into it
         if (image) {   // small images only (icons): anything else is refused
             const blob = await res.blob();
             if (!blob.type.startsWith('image/') || blob.size > 100 * 1024) throw new Error('Not an icon');
@@ -150,13 +168,13 @@ const storedFavicon = async (pageUrl) => {
     return icon === blank ? null : icon;
 };
 
-async function handleFavicon(url, iconUrl, sendResponse) {
+async function handleFavicon(url, iconUrl, from, sendResponse) {
     try {
         const page = new URL(url);
         const { favicons = {} } = await chrome.storage.session.get('favicons');   // site (origin) -> icon, or false: none found
         let icon = await storedFavicon(page.href) || await storedFavicon(page.origin + '/') || favicons[page.origin];
         if (icon === undefined && iconUrl && await previewsAllowed()) {
-            icon = await gatewayFetch(iconUrl, { anyHost: true, timeout: 5000, image: true }).then(blobToDataUrl, () => false);
+            icon = await gatewayFetch(iconUrl, { anyHost: true, from, timeout: 5000, image: true }).then(blobToDataUrl, () => false);
         }
         if (icon !== undefined && favicons[page.origin] !== icon) {
             const keep = Object.entries(favicons).slice(-199);   // a bounded memory: the newest 200 sites
@@ -172,13 +190,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request && request.target === 'offscreen') return;   // meant for the hidden page, not here
     const actions = {
         'READ_CLIPBOARD': () => handleReadClipboard(sender, sendResponse),
-        'FAVICON': () => handleFavicon(request.url, request.iconUrl, sendResponse),
+        'FAVICON': () => handleFavicon(request.url, request.iconUrl, sender.tab && sender.tab.url, sendResponse),
         'GET_RATE': () => handleGetRate(request.base, request.target, sendResponse),
         'TRANSLATE': () => handleTranslate(request.text, request.targetLang, sendResponse),
         'DEFINE': () => handleDefine(request.text, request.wordLang, request.targetLang, request.readerLangs, sendResponse),
         'SPELLCHECK': () => handleSpellcheck(request.text, request.language, sendResponse),
         'WIKI_SUMMARY': () => handleWikiSummary(request.lang, request.title, sendResponse),
-        'LINK_PREVIEW': () => handleLinkPreview(request.url, sendResponse)
+        'LINK_PREVIEW': () => handleLinkPreview(request.url, sender.tab && sender.tab.url, sendResponse)
     };
 
     if (actions[request.action]) {
@@ -212,10 +230,10 @@ async function previewsAllowed() {
     return linkPreviews && await chrome.permissions.contains({ origins: ['https://*/*', 'http://*/*'] });
 }
 
-async function handleLinkPreview(url, sendResponse) {
+async function handleLinkPreview(url, from, sendResponse) {
     try {
         if (!await previewsAllowed()) return sendResponse({ success: false, error: 'Link previews are off' });
-        const head = await gatewayFetch(url, { anyHost: true, timeout: 5000, cutAt: '</head>' });
+        const head = await gatewayFetch(url, { anyHost: true, from, timeout: 5000, cutAt: '</head>' });
         sendResponse({ success: true, result: head });
     } catch (error) {
         sendResponse({ success: false, error: error.message });

@@ -86,13 +86,17 @@ src/
 }
 ```
 
+**What belongs in an action:** only what is its own: its decisions (Search's `engines()`, Case's `nextCase()`), its request payloads, its parse (`parse()` and `parsed(ctx)`, memoized per selection with `getParsed`) and its wording. These are properties of the action object, used by its hooks through `this` (hooks are always called as methods of their action). **What stays shared:** facts about the selection, computed once and read from `ctx` (`language`, `wordCount`, `cleanText`); the user's preferences, through one accessor each (`userLanguage()`, `userCurrency()`); domain libraries (dates, conversions in `math.js`, language names); preview patterns in the toolkit (`textPreview`, `buildCopyMenu`); and services, through `tools.query()`.
+
 `keepOpen: true` keeps the tooltip open after execute - useful for actions the user might repeat like Case toggle.
 
 `dynamicLabel(ctx, tools)` (optional) works out the label for this selection: text, or `{ quote }` to show a value instead (Paste shows the clipboard text).
 
-`info(ctx, tools)` (optional) returns a short line, or a promise of one, for the strip: what Lighthouse decided for this action, which neither the label nor the preview shows (the languages Translate used, how old Convert's rate is, which engine Search opens). It is asked only when the button is pointed at, once per render (again after a `keepOpen` execute). It uses only local work or the same requests its preview makes, which the shared cache answers once; it never makes a request of its own. When a decision is made inside `execute`, move it into a helper both use (`spokenLanguage`, `nextCase`).
+`info(ctx, tools)` (optional) returns a short line, or a promise of one, for the strip: what Lighthouse decided for this action, which neither the label nor the preview shows (the languages Translate used, how old Convert's rate is, which engine Search opens). It is asked only when the button is pointed at, once per render (again after a `keepOpen` execute). It uses only local work or the same requests its preview makes, which the shared cache answers once; it never makes a request of its own. When a decision is made inside `execute`, make it a property of the action that both use (Case's `nextCase`).
 
-**Tools return their decisions with their results:** `tools.rate()` gives `{ rate, asOf }`, `translate` its `sourceLang` and `targetLang`, `define` the `language` the word was read as, `spellcheck` the `language` it was checked as. A new tool should do the same rather than hide what it chose.
+Menu items (`{ label, icon, onClick }` in a preview's `items`) may have `info` too, as text; picking one ends like an action's execute (the bar closes, the selection collapses or the field keeps focus).
+
+**Services return their decisions with their results:** `tools.rate()` gives `{ rate, asOf }`; through `tools.query(service, payload)`, `TRANSLATE` its `sourceLang` and `targetLang`, `DEFINE` the `language` the word was read as, `SPELLCHECK` the `language` it was checked as. A new service should do the same rather than hide what it chose. Each action builds its own request; the toolkit has no per-action wrappers.
 
 The background script automatically migrates new actions into existing users' settings. You don't need to touch migration.
 
@@ -104,7 +108,7 @@ Each exists once; use it rather than writing another.
 
 | Need | Use |
 |---|---|
-| Ask the background worker | `LighthouseUtils.message()` (`asyncQuery` in `api.js` unwraps it, and caches answers so preview, info and execute share one request) |
+| Ask the background worker | `LighthouseUtils.ask()`: one shared answer per question, so preview, info, execute and page conversion share one request (`asyncQuery` in `api.js` unwraps it); `message()` for what must be asked fresh (the clipboard) |
 | A language's name | `LighthouseUtils.languageName('de')` ("German") |
 | Words or sentences | `LighthouseUtils.segmenter('word' \| 'sentence')` |
 | A token in JavaScript (px, ms) | `LighthouseUtils.token('--so-duration', 200)` |

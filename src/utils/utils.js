@@ -37,6 +37,7 @@
 
   let tokenStyle = null;
   let languageNames = null;   // Intl.DisplayNames, made on first use
+  const answers = new Map();  // ask(): question -> { at, answer }
   window.LighthouseUtils = {
     Logger: logger,
     /**
@@ -115,7 +116,7 @@
                 const showIcon = (dataUrl) => { const img = document.createElement('img'); img.alt = shown.alt || 'icon'; img.src = dataUrl; show(img); };
                 // Without an icon, every site gets the same link icon: no per-language or per-domain rules
                 const showGeneric = () => show(window.LighthouseUtils.createSmartIcon('link'));
-                const ask = (iconUrl) => window.LighthouseUtils.message('FAVICON', { url: cleanUrl, iconUrl });
+                const ask = (iconUrl) => window.LighthouseUtils.ask('FAVICON', { url: cleanUrl, iconUrl });
                 // Chrome's own icon cache first (local, instant); when it has none, the link icon shows
                 // at once, and the page's declared icon replaces it if one is found (link previews on)
                 ask().then(async (res) => {
@@ -235,12 +236,43 @@
 
     shorten: (text, max) => text.length > max ? text.slice(0, max - 1) + '…' : text,
 
+    // A user's text in one line: spaces and line breaks collapsed, cut at a word boundary (any script)
+    // and never inside a character (an emoji, a letter with its accents); '…' only when something was cut
+    excerpt: (text, max) => {
+        const $ = window.LighthouseUtils, source = String(text), room = max * 16;
+        // Only the start is read (a clipboard can be megabytes): room for max characters even when each is long
+        const head = source.slice(0, room).replace(/\s+/g, ' ').trim();
+        const chars = [];
+        for (const { segment } of $.segmenter('grapheme').segment(head)) if (chars.push(segment) > max) break;
+        if (chars.length <= max) { if (source.length <= room) return head; chars.pop(); }   // it fits; or the start ran out (its last may be cut off)
+        const cut = chars.slice(0, max - 1).join('');
+        const word = $.segmenter('word').segment(head.slice(0, cut.length + 16)).containing(cut.length - 1);   // enough to see a word go on
+        const end = word && word.index > 0 && word.index + word.segment.length > cut.length ? word.index : cut.length;   // not inside a word
+        return head.slice(0, end).trimEnd() + '…';
+    },
+
     /** The one way to ask the background worker: resolves with its response, or null on failure */
     message: (action, payload = {}) => new Promise((resolve) => {
         try {
             chrome.runtime.sendMessage({ action, ...payload }, (res) => resolve(chrome.runtime.lastError ? null : (res || null)));
         } catch (e) { resolve(null); }
     }),
+
+    /**
+     * message(), answered once for every asker (preview, info, execute, page conversion), also while
+     * it is still being answered. Failures are not kept; maxAge (ms) for answers that go stale (rates).
+     */
+    ask: (action, payload = {}, { maxAge = Infinity } = {}) => {
+        const key = `${action}\u0000${JSON.stringify(payload)}`, hit = answers.get(key);
+        if (hit && Date.now() - hit.at < maxAge) return hit.answer;
+        const answer = window.LighthouseUtils.message(action, payload).then(res => {
+            if (!(res && res.success)) answers.delete(key);
+            return res;
+        });
+        answers.set(key, { at: Date.now(), answer });
+        if (answers.size > 40) answers.delete(answers.keys().next().value);
+        return answer;
+    },
 
     /** Shared word / sentence segmenters (one instance each) */
     segmenter: (() => {
