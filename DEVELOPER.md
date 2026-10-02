@@ -122,7 +122,7 @@ Only `page.css` is injected into web pages; everything else is `styles.css` in t
 
 All requests go through `gatewayFetch` in `background.js`, without cookies or referrer, only to the manifest's `host_permissions`; only LanguageTool may receive a POST body. Define reads English Wiktionary (the only edition with a definition endpoint) and translates the entry for readers without English. Spelling sends the selection and its sentence (at most 500 characters). Link icons come from Chrome's favicon cache.
 
-Collected snippets are in `chrome.storage.session` (memory only). Previews showing changing data (clipboard, collection) return `live: true` so they aren't cached.
+`_favicon` is never web-accessible: any site could then read Chrome's favicon cache, and so which sites you've visited. Link icons in web pages come from the background (`FAVICON`) instead. The clipboard is read by the extension, never the page: `tools.readClipboard()` asks the background, which reads it in a hidden offscreen page (`src/offscreen/`). Read in the page, Chrome would prompt on every site and an allowed site would get the clipboard. Collected snippets are in `chrome.storage.session` (memory only). Previews showing changing data (clipboard, collection) return `live: true` so they aren't cached.
 
 ## Parsers
 

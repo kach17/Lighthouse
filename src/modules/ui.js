@@ -82,7 +82,7 @@
         host.id = HOST_ID;
         host.style.cssText = 'display: none; position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;';
         document.documentElement.appendChild(host);
-        shadowRoot = host.attachShadow({ mode: 'open' });
+        shadowRoot = host.attachShadow({ mode: 'closed' });   // closed: the page can't read what the bar shows (clipboard, collected snippets)
 
         ['src/content/tokens.css', 'src/content/styles.css'].forEach(path => {
             const link = document.createElement('link');
@@ -200,6 +200,19 @@
         const apiCtx = API.prepareContext(ctx);
         const tools = apiCtx.tools;
 
+        // The linked page's <head>, fetched once for both the preview and the icon. The setting is
+        // checked first, so turning previews off also hides ones fetched earlier.
+        const pageHead = async () => {
+            if (!window.LighthouseState.get('linkPreviews', false)) return null;
+            const cacheKey = `og:${ctx.url}`;
+            let html = previewCache.get(cacheKey);
+            if (!html) {
+                html = await tools.linkPreview(ctx.url);
+                if (html) cacheSet(cacheKey, html);
+            }
+            return html;
+        };
+
         // The button shows where the link goes; the full address is in its title
         const linkBtn = createButton({
             id: 'link-open',
@@ -207,19 +220,12 @@
             title: `Open ${ctx.url}`,
             icon: null,
             iconUrl: ctx.url,
+            // With previews on, the page's own icon (from the same fetched <head> the preview uses)
+            findIcon: async () => { const html = await pageHead(); return html ? $.parsePreview(html, ctx.url).icon : null; },
             preview: async () => {
                 let card = null;
                 try {
-                    // The setting is checked first, so turning previews off also hides ones fetched earlier
-                    const cacheKey = `og:${ctx.url}`;
-                    let html = null;
-                    if (window.LighthouseState.get('linkPreviews', false)) {
-                        html = previewCache.get(cacheKey);
-                        if (!html) {
-                            html = await tools.linkPreview(ctx.url);
-                            if (html) cacheSet(cacheKey, html);
-                        }
-                    }
+                    const html = await pageHead();
                     if (html) {
                         const page = $.parsePreview(html, ctx.url);
                         if (page.title || page.image) {
@@ -265,7 +271,7 @@
             className: className,
             attrs: def.title ? { 'data-action': def.id, title: def.title } : { 'data-action': def.id },
             children: [ 
-                $.createSmartIcon(def.icon, def.iconUrl, def.label),
+                $.createSmartIcon(def.icon, def.iconUrl, def.label, def.findIcon),
                 $.create('span', { className: 'lighthouse-label', text: def.label })
             ]
         });

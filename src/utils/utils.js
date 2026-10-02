@@ -90,7 +90,7 @@
     /**
      * Smart Icon: Accepts Registry Key (e.g. 'copy') or SVG String or URL
      */
-    createSmartIcon: (icon, url, name) => {
+    createSmartIcon: (icon, url, name, findIcon = null) => {
         // 1. Registry Lookup (High Priority)
         if (icon && window.LighthouseIcons && window.LighthouseIcons[icon]) {
             return window.LighthouseUtils.getIconFromSvg(window.LighthouseIcons[icon]);
@@ -101,31 +101,31 @@
              return window.LighthouseUtils.getIconFromSvg(icon);
         }
         
-        // 3. Favicon Fetcher (for external links/search engines)
+        // 3. Favicon (for external links/search engines), else the link icon
         if (url) {
             try {
-                const cleanUrl = url.replace('%s', 'test'); 
-                const domain = new URL(cleanUrl).hostname;
-                const img = document.createElement('img');
-                
-                // Chrome's own favicon cache (declared in web_accessible_resources): no request leaves the browser
-                img.src = chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(cleanUrl)}&size=32`);
+                const cleanUrl = url.replace('%s', 'test');
+                new URL(cleanUrl);   // an invalid address falls through to the generic icon below
 
-                img.alt = name || icon || 'icon';
-                
-                // Fallback to Initial Letter on error
-                img.onerror = () => { 
-                    const displayDomain = domain.replace('www.', '');
-                    const letter = (name && name !== 'Open' ? name.charAt(0) : displayDomain.charAt(0)).toUpperCase();
-                    const avatar = document.createElement('div');
-                    avatar.style.cssText = 'width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; background: #374151; color: #fff; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase;';
-                    avatar.textContent = letter;
-                    
-                    if (img.parentNode) {
-                        img.parentNode.replaceChild(avatar, img);
-                    }
-                };
-                return img;
+                // The icon element is swapped in place (button styles expect it as a direct child)
+                let shown = document.createElement('img');
+                shown.alt = name || icon || 'icon';
+                const show = (el) => { if (shown.parentNode) shown.replaceWith(el); shown = el; };
+                const showIcon = (dataUrl) => { const img = document.createElement('img'); img.alt = shown.alt || 'icon'; img.src = dataUrl; show(img); };
+                // Without an icon, every site gets the same link icon: no per-language or per-domain rules
+                const showGeneric = () => show(window.LighthouseUtils.createSmartIcon('link'));
+                const ask = (iconUrl) => window.LighthouseUtils.message('FAVICON', { url: cleanUrl, iconUrl });
+                // Chrome's own icon cache first (local, instant); when it has none, the link icon shows
+                // at once, and the page's declared icon replaces it if one is found (link previews on)
+                ask().then(async (res) => {
+                    if (res && res.success) return showIcon(res.dataUrl);
+                    showGeneric();
+                    if (!findIcon || (res && res.none)) return;   // none: this site was already looked up
+                    const iconUrl = await findIcon();
+                    const found = iconUrl && await ask(iconUrl);
+                    if (found && found.success) showIcon(found.dataUrl);
+                });
+                return shown;
             } catch (e) { /* Invalid URL */ }
         }
         
@@ -159,7 +159,10 @@
         let image = meta('og:image:secure_url', 'og:image', 'twitter:image', 'twitter:image:src')
             || doc.querySelector('link[rel="image_src"]')?.getAttribute('href') || '';
         if (image) { try { image = new URL(image, baseUrl).href; } catch (e) { image = ''; } }
-        return { title, description, image };
+        // The page's icon: the one it declares, else the conventional /favicon.ico
+        let icon = '';
+        try { icon = new URL(doc.querySelector('link[rel~="icon" i]')?.getAttribute('href') || '/favicon.ico', baseUrl).href; } catch (e) { /* no icon */ }
+        return { title, description, image, icon };
     },
 
     /**

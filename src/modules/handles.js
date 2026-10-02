@@ -26,89 +26,128 @@
     let initialScrollY = 0;
     let edgeScrollInterval = null;
 
-    // An invisible copy of a text field, styled like it and laid over it, for measuring positions in its text
-    const MIRROR_PROPS = ['fontSize', 'fontFamily', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'textIndent', 'whiteSpace', 'padding', 'border', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY', 'textAlign', 'direction'];
-    function mirrorOf(element) {
-        const div = document.createElement('div');
-        const style = window.getComputedStyle(element);
-        MIRROR_PROPS.forEach(p => div.style[p] = style[p]);
-        const rect = element.getBoundingClientRect();
-        Object.assign(div.style, { position: 'fixed', top: rect.top + 'px', left: rect.left + 'px' });
-        return { div, style };
+    // ---------- Text-field mirror ----------
+    // Text fields expose no positions for their text, so an invisible copy laid over the field,
+    // styled like it, is measured instead. One mirror per field while its bar/handles are up:
+    // built on first use, rebuilt if the field is swapped or resized, removed in hideDragHandles.
+    const MIRROR_PROPS = ['boxSizing', 'width', 'height', 'overflowX', 'overflowY',
+        'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+        'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+        'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariant',
+        'fontVariantLigatures', 'fontVariantNumeric', 'fontFeatureSettings', 'fontVariationSettings',
+        'fontOpticalSizing', 'fontKerning', 'fontSynthesis', 'textRendering',
+        'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform', 'textAlign', 'direction',
+        'whiteSpace', 'overflowWrap', 'wordBreak', 'tabSize'];
+    // What a mirror always is, whatever was copied: fixed over the field, invisible, inert
+    const MIRROR_FIXED = { position: 'fixed', right: 'auto', bottom: 'auto', margin: '0', transform: 'none',
+        display: 'block', borderStyle: 'solid', borderColor: 'transparent', opacity: '0', visibility: 'visible',
+        pointerEvents: 'none', zIndex: '2147483647', transition: 'none', animation: 'none' };
+    const MARKER = '\u2060';   // zero-width and never a line-break opportunity, so markers can't change wrapping
+    // Fields whose styling the list doesn't cover (found by measuring once): those get every computed style
+    const needsFullCopy = new WeakMap();
+    let mirror = null;   // { field, div, w, h, lineHeight, key, ends }
+
+    function copyStyles(field, div, all) {
+        const cs = window.getComputedStyle(field);
+        if (all) for (const p of cs) div.style.setProperty(p, cs.getPropertyValue(p));
+        else MIRROR_PROPS.forEach(p => div.style[p] = cs[p]);
+        if (field.tagName !== 'TEXTAREA') div.style.whiteSpace = 'pre';   // single-line fields never wrap
+        Object.assign(div.style, MIRROR_FIXED);
+    }
+
+    // The field's text as a div lays it out (a trailing newline still opens a last line)
+    const plainText = (v) => v.endsWith('\n') ? v + MARKER : v;
+
+    function syncScroll(m) {
+        m.div.scrollTop = m.field.scrollTop;
+        m.div.scrollLeft = m.field.scrollLeft;
+    }
+
+    function ensureMirror(field) {
+        const r = field.getBoundingClientRect();
+        if (!mirror || mirror.field !== field || !mirror.div.isConnected || mirror.w !== r.width || mirror.h !== r.height) {
+            destroyMirror();
+            const div = document.createElement('div');
+            div.setAttribute('aria-hidden', 'true');
+            copyStyles(field, div, needsFullCopy.get(field) === true);
+            document.body.appendChild(div);
+            mirror = { field, div, w: r.width, h: r.height, lineHeight: parseFloat(window.getComputedStyle(field).lineHeight) || 20, key: null, ends: null };
+            // Self-check, once per field: a mirror that wraps like the field is as tall as its content
+            if (field.tagName === 'TEXTAREA' && !needsFullCopy.has(field)) {
+                div.textContent = plainText(field.value);
+                const matches = Math.abs(div.scrollHeight - field.scrollHeight) <= 1;
+                needsFullCopy.set(field, !matches);
+                if (!matches) copyStyles(field, div, true);
+            }
+        }
+        mirror.div.style.top = r.top + 'px';
+        mirror.div.style.left = r.left + 'px';
+        return mirror;
+    }
+
+    function destroyMirror() {
+        if (mirror) mirror.div.remove();
+        mirror = null;
+    }
+
+    // Where the selection starts and ends in a field, both from one layout; repeated asks for
+    // the same text, selection, scroll and position are answered without measuring again
+    function measureFieldEnds(field) {
+        const m = ensureMirror(field);
+        const v = field.value;
+        // Without offsets (email, number) the caret can't be read: the end of the value
+        const [s, e] = Input.hasOffsets(field) ? [field.selectionStart, field.selectionEnd] : [v.length, v.length];
+        const key = [s, e, field.scrollTop, field.scrollLeft, m.div.style.top, m.div.style.left, v].join('|');
+        if (m.key === key && m.ends) return m.ends;
+
+        const a = document.createElement('span'), b = document.createElement('span');
+        a.textContent = b.textContent = MARKER;
+        m.div.replaceChildren(v.slice(0, s), a, v.slice(s, e), b, v.slice(e));
+        syncScroll(m);
+        const at = (span) => { const r = span.getBoundingClientRect(); return { dx: r.left, dy: r.top, lineHeight: r.height || m.lineHeight }; };
+        m.ends = { start: at(a), end: at(b) };
+        m.key = key;
+        return m.ends;
     }
 
     function getInputCoordinates(element, atStart) {
         try {
-            // Without offsets (email, number) the caret can't be read: the end of the value
-            const index = !Input.hasOffsets(element) ? element.value.length : atStart ? element.selectionStart : element.selectionEnd;
-            const { div, style } = mirrorOf(element);
-            div.style.visibility = 'hidden';
-            
-            div.textContent = element.value.substring(0, index);
-            const span = document.createElement('span');
-            span.textContent = '\u200b';
-            div.appendChild(span);
-            
-            if (element.tagName === 'TEXTAREA') {
-                div.appendChild(document.createTextNode(element.value.substring(index)));
-            }
-
-            document.body.appendChild(div);
-            div.scrollTop = element.scrollTop;
-            div.scrollLeft = element.scrollLeft;
-            
-            const spanRect = span.getBoundingClientRect();
-            document.body.removeChild(div);
-            
-            return {
-                dx: spanRect.left,
-                dy: spanRect.top,
-                lineHeight: spanRect.height || parseFloat(style.lineHeight) || 20
-            };
+            const ends = measureFieldEnds(element);
+            return atStart ? ends.start : ends.end;
         } catch (e) {
             return null;
         }
     }
 
     function getIndexFromCoordinates(element, x, y) {
+        let m = null;
         try {
-            const { div, style } = mirrorOf(element);
-            Object.assign(div.style, { opacity: '0', zIndex: '2147483647', pointerEvents: 'auto' });
-            
-            div.textContent = element.value;
-            if (element.tagName === 'TEXTAREA') {
-                 div.style.whiteSpace = style.whiteSpace;
-            } else {
-                 div.style.whiteSpace = 'pre';
-            }
+            m = ensureMirror(element);
+            m.key = null;   // its text is replaced below; the next ends measurement fills it again
+            m.div.textContent = plainText(element.value);
+            syncScroll(m);
+            m.div.style.pointerEvents = 'auto';   // hit-testable only for this one lookup
 
-            document.body.appendChild(div);
-            div.scrollTop = element.scrollTop;
-            div.scrollLeft = element.scrollLeft;
-            
             let offset = 0;
             if (document.caretRangeFromPoint) {
                 const range = document.caretRangeFromPoint(x, y);
                 if (range) {
                     if (range.startContainer.nodeType === 3) {
                         offset = range.startOffset;
-                    } else if (range.startContainer === div && div.firstChild) {
-                         // Fallback if it hits the container
-                         // If offset is 0, it's start. If 1 (and 1 child), it's end?
-                         // caretRangeFromPoint on element returns child index.
-                         if (range.startOffset === 0) offset = 0;
-                         else offset = div.textContent.length;
+                    } else if (range.startContainer === m.div && m.div.firstChild) {
+                        // Hit the box itself: its start, or past its text
+                        offset = range.startOffset === 0 ? 0 : element.value.length;
                     }
                 }
             } else if (document.caretPositionFromPoint) {
                 const pos = document.caretPositionFromPoint(x, y);
                 if (pos) offset = pos.offset;
             }
-            
-            document.body.removeChild(div);
-            return offset;
+            return Math.min(offset, element.value.length);
         } catch (e) {
             return 0;
+        } finally {
+            if (m) m.div.style.pointerEvents = 'none';
         }
     }
 
@@ -431,6 +470,7 @@
     function hideDragHandles(animated = true, shouldIgnoreDragged = false) {
         ['handle0', 'handle1'].forEach(window.LighthouseUtils.frame.cancel);   // hidden before they could appear
         if (!shouldIgnoreDragged) {
+            destroyMirror();   // the bar and handles are going: so is the field's mirror
             stopDragListeners();
             isDraggingDragHandle = false;
             draggingHandleIndex = null;

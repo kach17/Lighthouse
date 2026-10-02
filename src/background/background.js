@@ -88,7 +88,7 @@ function isAllowedService(url) {
     }
 }
 
-async function gatewayFetch(url, { anyHost = false, timeout = 8000, cutAt = null, post = null } = {}) {
+async function gatewayFetch(url, { anyHost = false, timeout = 8000, cutAt = null, post = null, image = false } = {}) {
     let u;
     try { u = new URL(url); } catch (e) { throw new Error('Invalid URL'); }
     if (!['https:', 'http:'].includes(u.protocol)) throw new Error('Unsupported protocol');
@@ -102,6 +102,11 @@ async function gatewayFetch(url, { anyHost = false, timeout = 8000, cutAt = null
             ? { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: post, credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal }
             : { method: 'GET', credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        if (image) {   // small images only (icons): anything else is refused
+            const blob = await res.blob();
+            if (!blob.type.startsWith('image/') || blob.size > 100 * 1024) throw new Error('Not an icon');
+            return blob;
+        }
         let text = await res.text();
         if (cutAt) { const i = text.toLowerCase().indexOf(cutAt); if (i > -1) text = text.slice(0, i); }
         return text;
@@ -110,8 +115,64 @@ async function gatewayFetch(url, { anyHost = false, timeout = 8000, cutAt = null
     }
 }
 
+// --- Clipboard (read in src/offscreen with the extension's permission: no site prompts) ---
+let creating = null;   // one creation at a time (a second would fail)
+const ensureOffscreen = async () => (await chrome.offscreen.hasDocument()) || await (creating ||= chrome.offscreen.createDocument(
+    { url: 'src/offscreen/offscreen.html', reasons: ['CLIPBOARD'], justification: 'Paste button and its preview' }).finally(() => { creating = null; }));
+ensureOffscreen().catch(() => {});
+
+async function handleReadClipboard(sender, sendResponse) {
+    try {
+        if (!sender.tab || !sender.tab.active) throw new Error('Not the active tab');   // only the tab in front
+        await ensureOffscreen();
+        const res = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'read-clipboard' });
+        sendResponse({ success: true, text: (res && res.text) || '' });
+    } catch (error) {
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+// --- Favicons (_favicon is not web-accessible: pages could read the cache, i.e. your history) ---
+// Chrome stores icons per page you visited, so each step is tried until one has an icon:
+// that exact page, the site's homepage, the site's icon shown earlier this session, and (link
+// previews on) the icon the page itself declares. Sites are remembered in session storage.
+const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+});
+const cachedFavicon = async (pageUrl) => blobToDataUrl(await (await fetch(chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(pageUrl)}&size=32`))).blob());
+let blankFavicon = null;   // what Chrome returns when it has no icon
+const storedFavicon = async (pageUrl) => {
+    blankFavicon ||= cachedFavicon('https://lighthouse.invalid/');
+    const [icon, blank] = await Promise.all([cachedFavicon(pageUrl), blankFavicon]);
+    return icon === blank ? null : icon;
+};
+
+async function handleFavicon(url, iconUrl, sendResponse) {
+    try {
+        const page = new URL(url);
+        const { favicons = {} } = await chrome.storage.session.get('favicons');   // site (origin) -> icon, or false: none found
+        let icon = await storedFavicon(page.href) || await storedFavicon(page.origin + '/') || favicons[page.origin];
+        if (icon === undefined && iconUrl && await previewsAllowed()) {
+            icon = await gatewayFetch(iconUrl, { anyHost: true, timeout: 5000, image: true }).then(blobToDataUrl, () => false);
+        }
+        if (icon !== undefined && favicons[page.origin] !== icon) {
+            const keep = Object.entries(favicons).slice(-199);   // a bounded memory: the newest 200 sites
+            await chrome.storage.session.set({ favicons: { ...Object.fromEntries(keep), [page.origin]: icon } });
+        }
+        sendResponse(icon ? { success: true, dataUrl: icon } : { success: false, none: icon === false, error: 'No icon' });
+    } catch (error) {
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request && request.target === 'offscreen') return;   // meant for the hidden page, not here
     const actions = {
+        'READ_CLIPBOARD': () => handleReadClipboard(sender, sendResponse),
+        'FAVICON': () => handleFavicon(request.url, request.iconUrl, sendResponse),
         'GET_RATE': () => handleGetRate(request.base, request.target, sendResponse),
         'TRANSLATE': () => handleTranslate(request.text, request.targetLang, sendResponse),
         'DEFINE': () => handleDefine(request.text, request.wordLang, request.targetLang, request.readerLangs, sendResponse),
@@ -146,11 +207,14 @@ function handleWikiSummary(lang, title, sendResponse) {
 
 // Link preview (opt-in): fetches the hovered page itself, only its <head>, without cookies.
 // Only when the user turned previews on and granted the permission Chrome asked for.
+async function previewsAllowed() {
+    const { linkPreviews } = await new Promise(r => chrome.storage.sync.get({ linkPreviews: false }, r));
+    return linkPreviews && await chrome.permissions.contains({ origins: ['https://*/*', 'http://*/*'] });
+}
+
 async function handleLinkPreview(url, sendResponse) {
     try {
-        const { linkPreviews } = await new Promise(r => chrome.storage.sync.get({ linkPreviews: false }, r));
-        const granted = await chrome.permissions.contains({ origins: ['https://*/*', 'http://*/*'] });
-        if (!linkPreviews || !granted) return sendResponse({ success: false, error: 'Link previews are off' });
+        if (!await previewsAllowed()) return sendResponse({ success: false, error: 'Link previews are off' });
         const head = await gatewayFetch(url, { anyHost: true, timeout: 5000, cutAt: '</head>' });
         sendResponse({ success: true, result: head });
     } catch (error) {
@@ -165,6 +229,13 @@ const CACHE_DURATION = 24 * 60 * 60 * 1000;
 const getStorageLocal = (key) => new Promise((resolve) => chrome.storage.local.get(key, resolve));
 const setStorageLocal = (obj) => new Promise((resolve) => chrome.storage.local.set(obj, resolve));
 
+// Rates are per 1 USD. A currency missing from them (or an unusable value) is a failure, never NaN.
+function rateResponse(rates, base, target) {
+    const perUsd = (code) => code === 'USD' ? 1 : parseFloat(rates && rates[code]);
+    const rate = perUsd(target) / perUsd(base);
+    return Number.isFinite(rate) && rate > 0 ? { success: true, rate } : { success: false, error: 'Rate unavailable' };
+}
+
 async function handleGetRate(base, target, sendResponse) {
     try {
         const data = await getStorageLocal(RATES_CACHE_KEY);
@@ -172,18 +243,14 @@ async function handleGetRate(base, target, sendResponse) {
         const now = Date.now();
 
         if (cached && cached.timestamp && (now - cached.timestamp < CACHE_DURATION)) {
-            const rates = cached.rates;
-            const derivedRate = ((target === 'USD') ? 1 : parseFloat(rates[target])) / ((base === 'USD') ? 1 : parseFloat(rates[base]));
-            sendResponse({ success: true, rate: derivedRate });
-            return;
+            return sendResponse(rateResponse(cached.rates, base, target));
         }
 
         _fetch('https://api.coinbase.com/v2/exchange-rates?currency=USD', (res) => {
             if (!res.success) return sendResponse(res);
-            const rates = res.result.data.rates;
-            setStorageLocal({ [RATES_CACHE_KEY]: { timestamp: now, rates } });
-            const derivedRate = ((target === 'USD') ? 1 : parseFloat(rates[target])) / ((base === 'USD') ? 1 : parseFloat(rates[base]));
-            sendResponse({ success: true, rate: derivedRate });
+            const rates = res.result && res.result.data && res.result.data.rates;
+            if (rates) setStorageLocal({ [RATES_CACHE_KEY]: { timestamp: now, rates } });   // never cache a malformed reply
+            sendResponse(rateResponse(rates, base, target));
         }, JSON.parse);
     } catch (error) {
         sendResponse({ success: false, error: error.message });

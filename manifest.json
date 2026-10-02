@@ -8,6 +8,7 @@
     "activeTab",
     "clipboardWrite",
     "clipboardRead",
+    "offscreen",
     "storage",
     "favicon"
   ],
@@ -70,17 +71,6 @@
       ],
       "matches": [
         "<all_urls>"
-      ]
-    },
-    {
-      "resources": [
-        "_favicon/*"
-      ],
-      "matches": [
-        "<all_urls>"
-      ],
-      "extension_ids": [
-        "*"
       ]
     }
   ],

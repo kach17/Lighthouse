@@ -1,4 +1,3 @@
-
 /**
  * Lighthouse - Internal Action API
  * Factory for Context and Tools.
@@ -132,11 +131,10 @@
                 get: async () => { try { return (await chrome.storage.session.get('copyStack')).copyStack || []; } catch (e) { return []; } },
                 set: (items) => chrome.storage.session.set({ copyStack: items }).catch(() => {})
             },
+            // Read by the extension (background + hidden page), never by the page: no site prompts
             readClipboard: async () => {
-                try {
-                    if (navigator.clipboard) return await navigator.clipboard.readText();
-                    return '';
-                } catch(e) { return ''; }
+                const res = await $.message('READ_CLIPBOARD');
+                return res && res.success ? res.text : '';
             },
             
             // Interaction
