@@ -1,525 +1,150 @@
+/**
+ * Lighthouse - Selection handles
+ * Two handles at the selection's ends, where they are painted (LighthouseSelection.current().edges).
+ * Dragging one moves that end while the other stays; on release the selection goes through the pipeline.
+ */
 (function() {
-    const State = window.LighthouseState;
-    const SelLib = window.LighthouseSelection;
+    const State = window.LighthouseState, Sel = window.LighthouseSelection, Geometry = window.LighthouseGeometry;
+    const Input = window.LighthouseInput, $ = window.LighthouseUtils;
+    const EDGE_ZONE = 50, EDGE_STEP = 15;   // auto-scroll: how near the window's edge, and how far per frame
+    const duration = () => $.token('--so-duration', 200);
+    const other = (role) => role === 'start' ? 'end' : 'start';
 
-    const Input = window.LighthouseInput;
+    let handles = null;     // { start, end }: the handle elements, by the end each one marks
+    let drag = null;        // the drag in progress
+    let onRelease = null;   // the pipeline, told when a drag ends (set by content.js)
 
-    // While a handle is dragged, its pointer listeners go through the input manager
-    // (never document.onmousemove, which would overwrite the website's own handler).
-    let endDrag = null;
-    function startDragListeners(onMove, onUp) {
-        stopDragListeners();
+    // Where the ends are painted: { start, end }, each { dx, dy, lineHeight }. An end with nothing
+    // measured (at 0, 0): the last pointer or key event's position
+    function ends() {
+        let e = null;
+        try { e = Sel.current().edges('painted'); } catch (err) { /* nothing to measure */ }
+        if (!e) return null;
+        const at = (p) => p.dx || p.dy || !State.lastEvent ? { ...p } : { ...p, dx: State.lastEvent.clientX, dy: State.lastEvent.clientY - 8 };
+        return { start: at(e.start), end: at(e.end) };
+    }
+
+    // The only place a handle is positioned: across the line, centered on the edge, its tab below (CSS)
+    function layout(el, role, p, scrollX = 0, scrollY = 0) {
+        el.id = `lighthouse-draghandle-${role === 'start' ? 0 : 1}`;   // a name only
+        el.classList.toggle('is-start', role === 'start');
+        el.classList.toggle('is-end', role === 'end');
+        el.firstChild.style.height = `${p.lineHeight || 20}px`;
+        el.style.transform = `translate(${p.dx - el.offsetWidth / 2 - scrollX}px, ${p.dy - scrollY}px)`;
+    }
+
+    function create() {
+        const el = $.create('div', { className: 'lighthouse-tooltip-draghandle', children: [
+            $.create('div', { className: 'lighthouse-tooltip-draghandle-line' }),
+            $.create('div', { className: 'lighthouse-tooltip-draghandle-circle', events: { mousedown: (e) => startDrag(el, e) } })
+        ] });
+        ((window.LighthouseUI && window.LighthouseUI.shadowRoot) || document.body).appendChild(el);
+        return el;
+    }
+
+    function show() {
+        if (!State.get('addDragHandles')) return;
+        const p = ends();
+        if (!p) return;
+        const fresh = !handles;
+        if (fresh) handles = { start: create(), end: create() };
+        const { start, end } = handles;
+        layout(start, 'start', p.start);
+        layout(end, 'end', p.end);
+        if (fresh) $.frame.draw('handles', () => { void start.offsetWidth; start.style.opacity = end.style.opacity = 1; });
+    }
+
+    function hide(animated = true) {
+        $.frame.cancel('handles');   // hidden before they could appear
+        Geometry.release();          // the bar and handles are going: so is the field's mirror
+        stopDrag();
+        State.send('dragEnd');       // also a drag that couldn't start
+        if (!handles) return;
+        for (const el of [handles.start, handles.end]) {
+            if (!animated) el.style.transition = 'none';
+            el.style.opacity = '0';
+            el.style.pointerEvents = 'none';
+            setTimeout(() => el.remove(), animated ? duration() : 0);
+        }
+        handles = null;
+    }
+
+    // ---------- Dragging ----------
+    function startDrag(el, e) {
+        e.preventDefault();
+        State.send('dragStart');   // the bar goes while a handle is dragged
+        const role = el === handles.start ? 'start' : 'end', snap = Sel.current(), from = ends();
+        if (!from) return hide();
+        // The end that stays: an offset in a field's value (none where the caret can't be read), else a DOM point
+        const r = snap.range, stays = other(role);
+        const fixed = snap.field ? snap.offsets[stays === 'start' ? 0 : 1] ?? null
+            : r && (stays === 'start' ? { node: r.startContainer, offset: r.startOffset } : { node: r.endContainer, offset: r.endOffset });
+        const at = from[role];
+        drag = { el, role, snap, from, fixed, text: snap.text, crossed: false, scroll: [window.scrollX, window.scrollY], scrolling: null,
+            offsetY: e.clientY - (at.dy + (at.lineHeight || 20) / 2) };
+
+        for (const h of [handles.start, handles.end]) h.lastChild.style.pointerEvents = 'none';   // the text is hit-tested, not the handles
+        document.body.style.cursor = 'grabbing';
+        el.classList.add('is-dragging');
         Input.activate('drag');
-        const offMove = Input.on({ type: 'mousemove', scope: 'drag', handler: (e) => { onMove(e); return false; } });
-        const offUp = Input.on({ type: 'mouseup', scope: 'drag', handler: (e) => { onUp(e); return false; } });
-        endDrag = () => { offMove(); offUp(); Input.deactivate('drag'); endDrag = null; };
-    }
-    function stopDragListeners() { if (endDrag) endDrag(); }
-
-    const duration = () => window.LighthouseUtils.token('--so-duration', 200);
-
-    let dragHandles;
-    let isDraggingDragHandle = false;
-    let draggingHandleIndex = null;
-    let selectionHandleLineHeight = 21;
-    let initialScrollX = 0;
-    let initialScrollY = 0;
-    let edgeScrollInterval = null;
-
-    // ---------- Text-field mirror ----------
-    // Text fields expose no positions for their text, so an invisible copy laid over the field,
-    // styled like it, is measured instead. One mirror per field while its bar/handles are up:
-    // built on first use, rebuilt if the field is swapped or resized, removed in hideDragHandles.
-    const MIRROR_PROPS = ['boxSizing', 'width', 'height', 'overflowX', 'overflowY',
-        'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-        'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-        'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariant',
-        'fontVariantLigatures', 'fontVariantNumeric', 'fontFeatureSettings', 'fontVariationSettings',
-        'fontOpticalSizing', 'fontKerning', 'fontSynthesis', 'textRendering',
-        'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform', 'textAlign', 'direction',
-        'whiteSpace', 'overflowWrap', 'wordBreak', 'tabSize'];
-    // What a mirror always is, whatever was copied: fixed over the field, invisible, inert
-    const MIRROR_FIXED = { position: 'fixed', right: 'auto', bottom: 'auto', margin: '0', transform: 'none',
-        display: 'block', borderStyle: 'solid', borderColor: 'transparent', opacity: '0', visibility: 'visible',
-        pointerEvents: 'none', zIndex: '2147483647', transition: 'none', animation: 'none' };
-    const MARKER = '\u2060';   // zero-width and never a line-break opportunity, so markers can't change wrapping
-    // Fields whose styling the list doesn't cover (found by measuring once): those get every computed style
-    const needsFullCopy = new WeakMap();
-    let mirror = null;   // { field, div, w, h, lineHeight, key, ends }
-
-    function copyStyles(field, div, all) {
-        const cs = window.getComputedStyle(field);
-        if (all) for (const p of cs) div.style.setProperty(p, cs.getPropertyValue(p));
-        else MIRROR_PROPS.forEach(p => div.style[p] = cs[p]);
-        if (field.tagName !== 'TEXTAREA') div.style.whiteSpace = 'pre';   // single-line fields never wrap
-        Object.assign(div.style, MIRROR_FIXED);
+        drag.off = [Input.on({ type: 'mousemove', scope: 'drag', handler: (ev) => { moveDrag(ev); return false; } }),
+                    Input.on({ type: 'mouseup', scope: 'drag', handler: (ev) => { ev.preventDefault(); endDrag(); return false; } })];
     }
 
-    // The field's text as a div lays it out (a trailing newline still opens a last line)
-    const plainText = (v) => v.endsWith('\n') ? v + MARKER : v;
-
-    function syncScroll(m) {
-        m.div.scrollTop = m.field.scrollTop;
-        m.div.scrollLeft = m.field.scrollLeft;
+    function moveDrag(e) {
+        const d = drag;
+        e.preventDefault();
+        // The handle that stays keeps to its text as the page scrolls; the dragged one follows the pointer
+        const stays = other(d.role);
+        layout(handles[stays], stays, d.from[stays], window.scrollX - d.scroll[0], window.scrollY - d.scroll[1]);
+        const y = e.clientY - d.offsetY;
+        d.el.style.transform = `translate(${e.clientX - d.el.offsetWidth / 2}px, ${y - (d.from[d.role].lineHeight || 20) / 2}px)`;
+        if (d.fixed !== null && d.fixed !== undefined) {
+            const focus = Geometry.pointAt(d.snap, e.clientX, y);
+            // order: where the dragged end now is relative to the one that stays (-1 before, 0 at, 1 after)
+            const order = focus === null ? null : Sel.selectBetween(d.snap, d.fixed, focus);
+            if (order !== null) d.crossed = d.role === 'end' ? order < 0 : order > 0;
+        }
+        // Near the window's top or bottom edge, the page scrolls
+        const dir = e.clientY > window.innerHeight - EDGE_ZONE ? 1 : e.clientY < EDGE_ZONE ? -1 : 0;
+        if (dir && !d.scrolling) d.scrolling = setInterval(() => window.scrollBy(0, dir * EDGE_STEP), 16);
+        else if (!dir && d.scrolling) { clearInterval(d.scrolling); d.scrolling = null; }
     }
 
-    function ensureMirror(field) {
-        const r = field.getBoundingClientRect();
-        if (!mirror || mirror.field !== field || !mirror.div.isConnected || mirror.w !== r.width || mirror.h !== r.height) {
-            destroyMirror();
-            const div = document.createElement('div');
-            div.setAttribute('aria-hidden', 'true');
-            copyStyles(field, div, needsFullCopy.get(field) === true);
-            document.body.appendChild(div);
-            mirror = { field, div, w: r.width, h: r.height, lineHeight: parseFloat(window.getComputedStyle(field).lineHeight) || 20, key: null, ends: null };
-            // Self-check, once per field: a mirror that wraps like the field is as tall as its content
-            if (field.tagName === 'TEXTAREA' && !needsFullCopy.has(field)) {
-                div.textContent = plainText(field.value);
-                const matches = Math.abs(div.scrollHeight - field.scrollHeight) <= 1;
-                needsFullCopy.set(field, !matches);
-                if (!matches) copyStyles(field, div, true);
+    // Listeners off, the page as it was; true if a drag was in progress
+    function stopDrag() {
+        const d = drag;
+        if (!d) return false;
+        drag = null;
+        d.off.forEach(off => off());
+        Input.deactivate('drag');
+        clearInterval(d.scrolling);
+        document.body.style.cursor = 'unset';
+        d.el.classList.remove('is-dragging');
+        if (handles) for (const h of [handles.start, handles.end]) h.lastChild.style.pointerEvents = '';
+        State.send('dragEnd');
+        return d;
+    }
+
+    function endDrag() {
+        const d = stopDrag();
+        setTimeout(() => {   // after the browser has applied the last selection change
+            if (!handles) return;
+            // A drag that changed nothing takes in the next word on its side
+            if (Sel.current().text === d.text) Sel.extendByWord(d.role === 'start');
+            // Handles that crossed swap roles, so the start stays the start
+            if (d.crossed) handles = { start: handles.end, end: handles.start };
+            const p = ends();
+            if (!p) return hide();
+            for (const role of ['start', 'end']) {
+                const el = handles[role];
+                el.classList.add('is-settling');   // eases into place
+                setTimeout(() => el.classList.remove('is-settling'), duration());
+                layout(el, role, p[role]);
             }
-        }
-        mirror.div.style.top = r.top + 'px';
-        mirror.div.style.left = r.left + 'px';
-        return mirror;
+            if (onRelease) onRelease();
+        });
     }
 
-    function destroyMirror() {
-        if (mirror) mirror.div.remove();
-        mirror = null;
-    }
-
-    // Where the selection starts and ends in a field, both from one layout; repeated asks for
-    // the same text, selection, scroll and position are answered without measuring again
-    function measureFieldEnds(field) {
-        const m = ensureMirror(field);
-        const v = field.value;
-        // Without offsets (email, number) the caret can't be read: the end of the value
-        const [s, e] = Input.hasOffsets(field) ? [field.selectionStart, field.selectionEnd] : [v.length, v.length];
-        const key = [s, e, field.scrollTop, field.scrollLeft, m.div.style.top, m.div.style.left, v].join('|');
-        if (m.key === key && m.ends) return m.ends;
-
-        const a = document.createElement('span'), b = document.createElement('span');
-        a.textContent = b.textContent = MARKER;
-        m.div.replaceChildren(v.slice(0, s), a, v.slice(s, e), b, v.slice(e));
-        syncScroll(m);
-        const at = (span) => { const r = span.getBoundingClientRect(); return { dx: r.left, dy: r.top, lineHeight: r.height || m.lineHeight }; };
-        m.ends = { start: at(a), end: at(b) };
-        m.key = key;
-        return m.ends;
-    }
-
-    function getInputCoordinates(element, atStart) {
-        try {
-            const ends = measureFieldEnds(element);
-            return atStart ? ends.start : ends.end;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    function getIndexFromCoordinates(element, x, y) {
-        let m = null;
-        try {
-            m = ensureMirror(element);
-            m.key = null;   // its text is replaced below; the next ends measurement fills it again
-            m.div.textContent = plainText(element.value);
-            syncScroll(m);
-            m.div.style.pointerEvents = 'auto';   // hit-testable only for this one lookup
-
-            let offset = 0;
-            if (document.caretRangeFromPoint) {
-                const range = document.caretRangeFromPoint(x, y);
-                if (range) {
-                    if (range.startContainer.nodeType === 3) {
-                        offset = range.startOffset;
-                    } else if (range.startContainer === m.div && m.div.firstChild) {
-                        // Hit the box itself: its start, or past its text
-                        offset = range.startOffset === 0 ? 0 : element.value.length;
-                    }
-                }
-            } else if (document.caretPositionFromPoint) {
-                const pos = document.caretPositionFromPoint(x, y);
-                if (pos) offset = pos.offset;
-            }
-            return Math.min(offset, element.value.length);
-        } catch (e) {
-            return 0;
-        } finally {
-            if (m) m.div.style.pointerEvents = 'none';
-        }
-    }
-
-    function getSelectionCoordinates(atStart) {
-        if (State.ctx && State.ctx.isInput && State.ctx.element) {
-             const coords = getInputCoordinates(State.ctx.element, atStart);
-             if (coords) return coords;
-        }
-
-        const sel = window.LighthouseSelection.getActiveSelection();
-        if (!sel || !sel.rangeCount) return null;
-        
-        // Where the selection visibly starts or ends (not a line's end or the space between blocks)
-        const ext = window.LighthouseSelection.visibleExtent(sel, true);   // where it's painted, spaces included
-        const range = (ext ? ext.range : sel.getRangeAt(0)).cloneRange();
-        range.collapse(atStart);
-        
-        const rect = range.getBoundingClientRect();
-        let dx = rect.x;
-        let dy = rect.y;
-        let lineHeight = rect.height;
-
-        // The browser paints a selection across the whole line box (letters plus the
-        // line spacing), not just the letters' box. Match that so handles sit outside it.
-        if (rect.height > 0) {
-            const node = range.startContainer;
-            const el = node && (node.nodeType === 1 ? node : node.parentElement);
-            const lineBox = el ? parseFloat(window.getComputedStyle(el).lineHeight) : NaN; // NaN for 'normal'
-            if (!isNaN(lineBox) && lineBox > lineHeight) {
-                dy -= (lineBox - lineHeight) / 2;
-                lineHeight = lineBox;
-            }
-        }
-
-        // Fallback to mouse event if everything fails
-        if (dx === 0 && dy === 0 && State.lastEvent) {
-            dx = State.lastEvent.clientX;
-            dy = State.lastEvent.clientY - 8;
-        }
-
-        return { dx, dy, lineHeight };
-    }
-
-    // The handle is exactly as tall as the selected text (the collapsed range's rect),
-    // with fallbacks for inputs and unusual layouts.
-    function calculateLineHeight(dimensions, isInput, selection) {
-        let lh = dimensions && dimensions.lineHeight;
-        if (!lh || isNaN(lh)) {
-            let source = null;
-            if (isInput && State.ctx.element) source = State.ctx.element;
-            else if (selection && selection.anchorNode) source = selection.anchorNode.parentElement;
-            const parsed = source ? parseFloat(window.getComputedStyle(source).fontSize) * 1.25 : NaN;
-            lh = isNaN(parsed) ? 20 : parsed;
-        }
-        return lh;
-    }
-
-    function getRoot() {
-        return (window.LighthouseUI && window.LighthouseUI.shadowRoot) ? window.LighthouseUI.shadowRoot : document;
-    }
-
-    // ---------- Visual layout: the only place handles are positioned ----------
-    // The handle spans the selected line, centered on the selection edge;
-    // its tab always hangs just below it (drawn by CSS).
-    function layoutHandle(h, idx, dims, scrollDX = 0, scrollDY = 0) {
-        if (!h || !dims) return;
-        h.classList.toggle('is-start', idx === 0);
-        h.classList.toggle('is-end', idx === 1);
-        const lh = dims.lineHeight || selectionHandleLineHeight;
-        const line = h.querySelector('.lighthouse-tooltip-draghandle-line');
-        if (line) line.style.height = `${lh}px`;
-        h.style.transform = `translate(${dims.dx - h.offsetWidth / 2 - scrollDX}px, ${dims.dy - scrollDY}px)`;
-    }
-
-    // Briefly animate position changes (after a drag settles), using the motion tokens.
-    function settle(h) {
-        h.classList.add('is-settling');
-        setTimeout(() => h.classList.remove('is-settling'), duration());
-    }
-
-    function addDragHandle(dragHandleIndex, selStartDimensions, selEndDimensions) {
-        const selection = window.LighthouseSelection.getActiveSelection();
-        const isInput = State.ctx && State.ctx.isInput;
-        if (!isInput && (!selection || !selection.rangeCount)) return;
-
-        try {
-            selectionHandleLineHeight = calculateLineHeight(
-                dragHandleIndex == 0 ? selStartDimensions : selEndDimensions,
-                isInput,
-                selection
-            );
-        } catch (e) {
-            window.LighthouseUtils.Logger.warn('[Handles] Error calculating line height:', e);
-            selectionHandleLineHeight = 20;
-        }
-
-        const fromPointer = () => State.lastEvent
-            ? { dx: State.lastEvent.clientX, dy: State.lastEvent.clientY - selectionHandleLineHeight / 2, lineHeight: selectionHandleLineHeight }
-            : null;
-
-        try {
-            var currentWindowSelection;
-
-            if (selEndDimensions && selEndDimensions.dx == 0 && selEndDimensions.dy == 0) selEndDimensions = fromPointer() || selEndDimensions;
-            if (selStartDimensions && selStartDimensions.dx == 0 && selStartDimensions.dy == 0) selStartDimensions = fromPointer() || selStartDimensions;
-            if (selStartDimensions == null || selEndDimensions == null) return;
-
-            const dragHandle = document.createElement('div');
-            dragHandle.className = 'lighthouse-tooltip-draghandle';
-            dragHandle.id = `lighthouse-draghandle-${dragHandleIndex}`;
-
-            const line = document.createElement('div');
-            line.className = 'lighthouse-tooltip-draghandle-line';
-            const circleDiv = document.createElement('div');
-            circleDiv.className = 'lighthouse-tooltip-draghandle-circle';
-            dragHandle.append(line, circleDiv);
-
-            const root = getRoot();
-            (root === document ? document.body : root).appendChild(dragHandle);
-            layoutHandle(dragHandle, dragHandleIndex, dragHandleIndex == 0 ? selStartDimensions : selEndDimensions);
-            window.LighthouseUtils.frame.draw('handle' + dragHandleIndex, () => { void dragHandle.offsetWidth; dragHandle.style.opacity = 1; });
-
-            circleDiv.onmousedown = function (e) {
-                if (window.LighthouseUI) window.LighthouseUI.destroy();
-
-                // DYNAMIC INDEX RESOLUTION: Always read from DOM to handle swaps
-                let activeHandleIndex = parseInt(dragHandle.id.split('-')[2]);
-                if (isNaN(activeHandleIndex)) activeHandleIndex = dragHandleIndex;
-
-                isDraggingDragHandle = true;
-                draggingHandleIndex = activeHandleIndex;
-                e.preventDefault();
-
-                // Make ALL handles transparent to hits so caretRangeFromPoint sees text
-                const root = getRoot();
-                root.querySelectorAll('.lighthouse-tooltip-draghandle-circle').forEach(c => c.style.pointerEvents = 'none');
-
-                if (window.LighthouseSelection.getActiveSelection) {
-                    currentWindowSelection = window.LighthouseSelection.getActiveSelection().toString();
-                } else if (document.selection) {
-                    currentWindowSelection = document.selection.createRange().toString();
-                }
-
-                selStartDimensions = getSelectionCoordinates(true);
-                selEndDimensions = getSelectionCoordinates(false);
-                if (selStartDimensions == null || selEndDimensions == null) { hideDragHandles(); return; }
-
-                document.body.style.cursor = 'grabbing';
-                dragHandle.classList.add('is-dragging');
-
-                initialScrollX = window.scrollX;
-                initialScrollY = window.scrollY;
-
-                const draggedDims = activeHandleIndex === 0 ? selStartDimensions : selEndDimensions;
-                const draggedLH = draggedDims.lineHeight || selectionHandleLineHeight;
-                const textCenterY = draggedDims.dy + draggedLH / 2;
-                const dragOffsetY = e.clientY - textCenterY;
-
-                // Capture the fixed end of the selection (the one NOT being dragged)
-                let fixedAnchor = null;
-                if (State.ctx && State.ctx.isInput && State.ctx.element) {
-                    const el = State.ctx.element;
-                    fixedAnchor = activeHandleIndex === 0 ? el.selectionEnd : el.selectionStart;
-                } else {
-                    const sel = window.LighthouseSelection.getActiveSelection();
-                    if (sel && sel.rangeCount) {
-                        const range = sel.getRangeAt(0);
-                        fixedAnchor = activeHandleIndex === 0
-                            ? { node: range.endContainer, offset: range.endOffset }
-                            : { node: range.startContainer, offset: range.startOffset };
-                    }
-                }
-
-                const onMove = function (e) {
-                    try {
-                        e.preventDefault();
-
-                        const scrollDeltaX = window.scrollX - initialScrollX;
-                        const scrollDeltaY = window.scrollY - initialScrollY;
-
-                        // The anchor handle stays on its text, compensating for scroll
-                        const anchorIndex = 1 - activeHandleIndex;
-                        layoutHandle(root.getElementById(`lighthouse-draghandle-${anchorIndex}`), anchorIndex,
-                            anchorIndex === 0 ? selStartDimensions : selEndDimensions, scrollDeltaX, scrollDeltaY);
-
-                        // The dragged handle follows the pointer, centered on the line it points at
-                        const adjustedY = e.clientY - dragOffsetY;
-                        dragHandle.style.transform = `translate(${e.clientX - dragHandle.offsetWidth / 2}px, ${adjustedY - draggedLH / 2}px)`;
-
-                        if (fixedAnchor !== null) {
-                            if (State.ctx && State.ctx.isInput && State.ctx.element) {
-                                const el = State.ctx.element;
-                                const newIndex = getIndexFromCoordinates(el, e.clientX, adjustedY);
-                                const start = Math.min(newIndex, fixedAnchor);
-                                const end = Math.max(newIndex, fixedAnchor);
-                                el.setSelectionRange(start, end, newIndex < fixedAnchor ? 'backward' : 'forward');
-                            } else {
-                                const focusPoint = SelLib.getPointFromCoords(e.clientX, adjustedY);
-                                if (focusPoint) SelLib.setSafeRange(fixedAnchor, focusPoint);
-                            }
-                        }
-                    } catch (e) {}
-
-                    const edgeZone = 50;
-                    if (e.clientY > window.innerHeight - edgeZone) {
-                        if (!edgeScrollInterval) edgeScrollInterval = setInterval(() => window.scrollBy(0, 15), 16);
-                    } else if (e.clientY < edgeZone) {
-                        if (!edgeScrollInterval) edgeScrollInterval = setInterval(() => window.scrollBy(0, -15), 16);
-                    } else if (edgeScrollInterval) {
-                        clearInterval(edgeScrollInterval);
-                        edgeScrollInterval = null;
-                    }
-                };
-
-                const onUp = function (e) {
-                    e.preventDefault();
-                    stopDragListeners();
-                    document.body.style.cursor = 'unset';
-                    dragHandle.classList.remove('is-dragging');
-
-                    if (edgeScrollInterval) {
-                        clearInterval(edgeScrollInterval);
-                        edgeScrollInterval = null;
-                    }
-
-                    root.querySelectorAll('.lighthouse-tooltip-draghandle-circle').forEach(c => c.style.pointerEvents = '');
-
-                    setTimeout(function () {
-                        const windowSelection = window.LighthouseSelection.getActiveSelection();
-                        if (windowSelection && windowSelection.toString() == currentWindowSelection.toString()) {
-                            window.LighthouseSelection.extendSelectionByWord(windowSelection, activeHandleIndex);
-                        }
-
-                        setTimeout(function () {
-                            isDraggingDragHandle = false;
-                            draggingHandleIndex = null;
-
-                            let start = getSelectionCoordinates(true);
-                            let end = getSelectionCoordinates(false);
-                            if (start == null || end == null) { hideDragHandles(); return; }
-                            if (end.dx == 0 && end.dy == 0) end = fromPointer() || end;
-                            if (start.dx == 0 && start.dy == 0) start = fromPointer() || start;
-                            if (end.dx > window.innerWidth - 25 && State.lastEvent) end.dx = State.lastEvent.clientX;
-
-                            // Inversion: if the handles crossed, swap their identities
-                            const distToStart = Math.hypot(start.dx - e.clientX, start.dy - e.clientY);
-                            const distToEnd = Math.hypot(end.dx - e.clientX, end.dy - e.clientY);
-                            if ((activeHandleIndex == 1 && distToStart < distToEnd) || (activeHandleIndex == 0 && distToEnd < distToStart)) {
-                                const h0 = root.getElementById('lighthouse-draghandle-0');
-                                const h1 = root.getElementById('lighthouse-draghandle-1');
-                                if (h0 && h1) {
-                                    h0.id = 'lighthouse-draghandle-1';
-                                    h1.id = 'lighthouse-draghandle-0';
-                                    activeHandleIndex = 1 - activeHandleIndex;
-                                }
-                            }
-
-                            [0, 1].forEach(idx => {
-                                const h = root.getElementById(`lighthouse-draghandle-${idx}`);
-                                if (!h) return;
-                                settle(h);
-                                layoutHandle(h, idx, idx === 0 ? start : end);
-                            });
-
-                            const newCtx = SelLib.getContext();
-                            const languageCheck = window.LighthouseLanguage ? window.LighthouseLanguage.inspect(newCtx) : Promise.resolve({ foreign: null, language: null });
-                            languageCheck.then(({ foreign, language, reliable }) => {
-                                newCtx.foreign = foreign;
-                                newCtx.language = language;
-                                newCtx.languageReliable = reliable === true;
-                                State.update(newCtx);
-                                if (window.LighthouseUI) window.LighthouseUI.render(State);
-                            });
-                        }, 2);
-                    }, 1);
-                };
-                startDragListeners(onMove, onUp);
-            };
-        } catch (e) {}
-    }
-
-    function updateDragHandle(dragHandleIndex, selStartDimensions, selEndDimensions) {
-        const dragHandle = getRoot().getElementById(`lighthouse-draghandle-${dragHandleIndex}`);
-        if (!dragHandle) return;
-        const dims = dragHandleIndex == 0 ? selStartDimensions : selEndDimensions;
-        selectionHandleLineHeight = calculateLineHeight(dims, State.ctx && State.ctx.isInput, window.LighthouseSelection.getActiveSelection());
-        layoutHandle(dragHandle, dragHandleIndex, dims);
-    }
-
-    function setDragHandles() {
-        if (!State.get('addDragHandles', true)) return;
-
-        const start = getSelectionCoordinates(true);
-        const end = getSelectionCoordinates(false);
-        
-        if (!start || !end) return;
-        
-        if (start.dontAddDragHandles) return;
-
-        const root = getRoot();
-
-        let existingDragHandle0 = root.getElementById('lighthouse-draghandle-0');
-        if (existingDragHandle0 == null || existingDragHandle0 == undefined) {
-            addDragHandle(0, start, end);
-        } else {
-            updateDragHandle(0, start, end);
-        }
-
-        let existingDragHandle1 = root.getElementById('lighthouse-draghandle-1');
-        if (existingDragHandle1 == null || existingDragHandle1 == undefined) {
-            addDragHandle(1, start, end);
-        } else {
-            updateDragHandle(1, start, end);
-        }
-        
-        if (window.LighthouseUtils && window.LighthouseUtils.logEvent) {
-            window.LighthouseUtils.logEvent('HANDLES', 'UPDATE', 'Positions Updated');
-        }
-    }
-
-    function hideDragHandles(animated = true, shouldIgnoreDragged = false) {
-        ['handle0', 'handle1'].forEach(window.LighthouseUtils.frame.cancel);   // hidden before they could appear
-        if (!shouldIgnoreDragged) {
-            destroyMirror();   // the bar and handles are going: so is the field's mirror
-            stopDragListeners();
-            isDraggingDragHandle = false;
-            draggingHandleIndex = null;
-        }
-        
-        const root = getRoot();
-        
-        // Re-query every time to ensure we get the latest elements
-        dragHandles = root.querySelectorAll('.lighthouse-tooltip-draghandle');
-
-        for (let i = 0, l = dragHandles.length; i < l; i++) {
-            const dragHandle = dragHandles[i];
-
-            if (shouldIgnoreDragged && draggingHandleIndex !== null && draggingHandleIndex !== undefined) {
-                try {
-                    let id = dragHandle.id;
-                    let handleIndex = parseInt(id.split('-')[2]);
-                    if (handleIndex == draggingHandleIndex) continue;
-                } catch (e) {}
-            }
-
-            if (!animated) dragHandle.style.transition = 'none';
-            dragHandle.style.opacity = "0";
-            dragHandle.style.pointerEvents = "none";
-
-            setTimeout(function () {
-                dragHandle.remove();
-            }, animated ? duration() : 0);
-        }
-    }
-
-    // Where the selection starts and ends ({ dx, dy, lineHeight } each), as the handles see it
-    function selectionEnds() {
-        try {
-            const start = getSelectionCoordinates(true), end = getSelectionCoordinates(false);
-            return start && end && !start.dontAddDragHandles ? { start, end } : null;
-        } catch (e) { return null; }
-    }
-
-    window.LighthouseHandles = {
-        setDragHandles,
-        selectionEnds,
-        hideDragHandles,
-        get isDragging() { return isDraggingDragHandle; },
-        get areVisible() { 
-            const root = getRoot();
-            const h = root.querySelectorAll('.lighthouse-tooltip-draghandle');
-            return h.length > 0 && h[0].style.opacity !== '0';
-        }
-    };
+    window.LighthouseHandles = { show, hide, onRelease: (fn) => { onRelease = fn; } };
 })();

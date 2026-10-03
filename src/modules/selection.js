@@ -48,52 +48,6 @@
         return text;
     }
 
-    // What is visibly selected: trimmed to its first and last visible characters, with the box of that
-    // text alone (a range's own box spans whole list items it contains). null for very large selections.
-    // Measured once per frame for the same selection: the bar and both handles ask for it on every scroll
-    let extentCache = null;
-    function visibleExtent(sel = getActiveSelection(), spaces = false) {   // spaces: see measureExtent
-        const range = sel && sel.rangeCount && sel.getRangeAt(0);
-        if (!range) return null;
-        const key = [range.startContainer, range.startOffset, range.endContainer, range.endOffset, spaces];
-        if (extentCache && key.every((k, i) => k === extentCache.key[i])) return extentCache.value;
-        if (!extentCache) requestAnimationFrame(() => { extentCache = null; });
-        extentCache = { key, value: measureExtent(range, spaces) };
-        return extentCache.value;
-    }
-
-    // A space the browser paints within a line (one a Windows double-click takes after a word): it has a box,
-    // and the characters beside it share its line (a space at a line break does not: a caret after it shows below)
-    function painted(n, i) {
-        const box = (k) => { const c = document.createRange(); c.setStart(n, k); c.setEnd(n, k + 1); return [...c.getClientRects()].find(q => q.width > 0); };
-        const own = /\s/.test(n.data[i]) && box(i);
-        return !!own && [i - 1, i + 1].every(k => { const q = k >= 0 && k < n.length && box(k); return !q || Math.abs(q.top - own.top) < 1; });
-    }
-
-    function measureExtent(range, spaces) {
-        const trimmed = range.cloneRange(), w = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
-        let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity, count = 0;
-        for (let n = w.currentNode.nodeType === 3 ? w.currentNode : w.nextNode(); n; n = w.nextNode()) {
-            if (++count > 500) return null;
-            const from = n === range.startContainer ? range.startOffset : 0;
-            const text = range.intersectsNode(n) ? n.data.slice(from, n === range.endContainer ? range.endOffset : n.length) : '';
-            if (!text.trim()) continue;
-            const part = document.createRange();
-            part.setStart(n, from + text.search(/\S/));
-            part.setEnd(n, from + text.trimEnd().length);
-            if (spaces) for (const edge of [true, false]) {   // the handles: also a space painted on its line
-                const i = edge ? part.startOffset - 1 : part.endOffset, q = i >= from && i < from + text.length && painted(n, i);
-                if (q) edge ? part.setStart(n, i) : part.setEnd(n, i + 1);
-            }
-            const rects = [...part.getClientRects()].filter(q => q.width);
-            if (!rects.length) continue;   // hidden text
-            if (l === Infinity) trimmed.setStart(n, part.startOffset);
-            trimmed.setEnd(n, part.endOffset);
-            rects.forEach(q => { l = Math.min(l, q.left); t = Math.min(t, q.top); r = Math.max(r, q.right); b = Math.max(b, q.bottom); });
-        }
-        return l === Infinity ? null : { range: trimmed, box: { left: l, top: t, right: r, bottom: b, width: r - l, height: b - t } };
-    }
-
     function getActiveSelection() {
         let sel = window.getSelection();
         
@@ -111,62 +65,52 @@
         return sel;
     }
 
-    function getContext() {
-        const el = document.activeElement;
-        const { isForm, isEditable } = isEditableElement(el);
-        const isInput = isForm || isEditable;
-        
-        const s = surface(el), selected = s.read(), all = isInput && s.read('all');
-        const text = sanitizeText(selected ? selected.text : '');
-        const isEmptyInput = !!all && !/\S/.test(all.before + all.text + all.after);
-        
-        // Semantic Analysis
-        const sel = window.getSelection();
-        const semanticNode = isInput ? el : (sel.anchorNode ? (sel.anchorNode.nodeType === 3 ? sel.anchorNode.parentElement : sel.anchorNode) : null);
-        const semantic = getSemanticInfo(semanticNode, text);
+    // The selection as one immutable snapshot, made by getContext (see DEVELOPER.md, "The context"). Frozen:
+    // what was selected and where, in which direction, by which pointer. Live: edges(), measured against
+    // the current layout, and language, decided once. id stays while the selection does.
+    let lastId = 0, lastKey = null, last = null;
+    const sameKey = (a, b) => !!a && !!b && a.length === b.length && a.every((k, i) => k === b[i]);
+    // What identifies the selection now: a plain field with its offsets and value, else the range's points
+    function liveKey() {
+        const el = window.LighthouseInput.focusedElement();   // through components' shadow roots, as everywhere
+        if (isEditableElement(el).isForm) return [el, ...(window.LighthouseInput.hasOffsets(el) ? [el.selectionStart, el.selectionEnd] : [undefined, undefined]), el.value];
+        const sel = getActiveSelection(), r = sel && sel.rangeCount && sel.getRangeAt(0);
+        return r ? [r.startContainer, r.startOffset, r.endContainer, r.endOffset] : [null];
+    }
+    // Whether a snapshot still describes the selection (slow work checks this before showing its answer)
+    const isCurrent = (snap) => !!snap && snap.id === lastId && sameKey(liveKey(), lastKey);
+    // The selection as it is now: the last snapshot while it hasn't changed, else a new one
+    const current = () => isCurrent(last) ? last : getContext().snapshot;
 
-        return { 
-            text, 
-            isInput, 
-            isForm, 
-            isEditable, 
-            isEmptyInput,
-            hasText: text.length > 0, 
-            element: isInput ? el : null,
-            semanticType: semantic.type
-        };
+    function snapshot(el, isForm, s, selected, cleanText, pointer) {
+        const key = liveKey();
+        if (!sameKey(key, lastKey)) lastId++;
+        lastKey = key;
+        const field = isForm ? el : null, sel = field ? null : getActiveSelection(), text = selected ? selected.text : '';
+        const backward = field ? field.selectionDirection === 'backward' : !!(sel && sel.anchorNode && sel.focusNode && (sel.anchorNode === sel.focusNode
+            ? sel.focusOffset < sel.anchorOffset : sel.anchorNode.compareDocumentPosition(sel.focusNode) & Node.DOCUMENT_POSITION_PRECEDING));
+        let language = null;
+        return last = Object.freeze({
+            id: lastId, surface: s, field, backward,
+            offsets: field ? [key[1], key[2]] : [undefined, undefined],   // a plain field: offsets in its value
+            range: sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null,   // anything else: a DOM range
+            text,                 // as selected (a Windows double-click's trailing space included)
+            cleanText,            // as actions read it: trimmed, invisible characters and link tracking removed
+            caret: !text,
+            pointer: pointer ? { x: pointer.clientX, y: pointer.clientY } : null,
+            edges(kind) { return window.LighthouseGeometry.edges(this, kind); },
+            get language() { return language ||= window.LighthouseLanguage.inspect({ text: cleanText, isForm, element: el }); }   // { foreign, language, reliable }
+        });
     }
 
-    function getSemanticInfo(element, text) {
-        if (!element) return { type: null };
-
-        const tag = element.tagName;
-        const type = element.getAttribute('type');
-        const name = (element.getAttribute('name') || '').toLowerCase();
-        const id = (element.getAttribute('id') || '').toLowerCase();
-        const cls = (element.className || '').toString().toLowerCase();
-
-        // 1. Code
-        if (tag === 'CODE' || tag === 'PRE' || cls.includes('code') || cls.includes('hljs') || cls.includes('language-')) {
-            return { type: 'code' };
-        }
-
-        // 2. Inputs
-        if (tag === 'INPUT' || tag === 'TEXTAREA') {
-            if (type === 'password') return { type: 'password' };
-            if (type === 'email' || name.includes('email') || id.includes('email')) return { type: 'email' };
-            if (type === 'tel' || name.includes('phone') || name.includes('tel')) return { type: 'phone' };
-            if (type === 'date' || name.includes('date') || name.includes('dob')) return { type: 'date' };
-            if (type === 'search' || name.includes('search') || name.includes('query')) return { type: 'search' };
-        }
-
-        // 3. Text Patterns
-        if (text) {
-            if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return { type: 'email' };
-            if (/^(http|https):\/\//.test(text)) return { type: 'url' };
-        }
-
-        return { type: null };
+    // The context actions read, with the snapshot. pointer (optional): the event that made the selection
+    function getContext(pointer = null) {
+        const el = window.LighthouseInput.focusedElement(), { isForm, isEditable } = isEditableElement(el), isInput = isForm || isEditable;
+        const s = surface(el), selected = s.read(), all = isInput && s.read('all');
+        const text = sanitizeText(selected ? selected.text : '');
+        return { text, isInput, isForm, isEditable, hasText: !!text, element: isInput ? el : null,
+            isEmptyInput: !!all && !/\S/.test(all.before + all.text + all.after),
+            snapshot: snapshot(el, isForm, s, selected, text, pointer) };
     }
 
     function getLinkContext(target) {
@@ -345,7 +289,7 @@
                 const r = range();
                 if (!r) return;
                 const a = lineAt(root, r.startContainer, r.startOffset), b = lineAt(root, r.endContainer, r.endOffset);
-                setSafeRange(a.pointAt(a.indexOf(r.startContainer, r.startOffset) + dStart), b.pointAt(b.indexOf(r.endContainer, r.endOffset) + dEnd));
+                setRange(a.pointAt(a.indexOf(r.startContainer, r.startOffset) + dStart), b.pointAt(b.indexOf(r.endContainer, r.endOffset) + dEnd));
             },
             selectAll: () => selectNode(root),
             insert: writable ? (str) => document.execCommand('insertText', false, str) : null
@@ -542,94 +486,47 @@
         r.selectNodeContents(node); s.removeAllRanges(); s.addRange(r);
     }
 
-    // --- Low-Level Point/Range Utilities ---
+    // --- Setting a selection ---
 
-    // The nearest text position for a boundary given as an element and child index
-    function normalizeSnapPoint(node, offset, isStart) {
-        if (node.nodeType === 3) return { node, offset };
-        const child = node.childNodes[isStart ? offset : offset - 1];
-        if (!child) return null;
-        const w = document.createTreeWalker(child, NodeFilter.SHOW_TEXT);
-        let text = child.nodeType === 3 ? child : w.nextNode();
-        if (!isStart && child.nodeType !== 3) for (let n; (n = w.nextNode());) text = n;
-        return text ? { node: text, offset: isStart ? 0 : text.length } : null;
-    }
-
-    function getPointFromCoords(x, y) {
-        let range = null;
-        
-        // 1. Native Hit Test
-        if (document.caretRangeFromPoint) {
-            range = document.caretRangeFromPoint(x, y);
-        } else if (document.caretPositionFromPoint) {
-            const pos = document.caretPositionFromPoint(x, y);
-            if (pos) {
-                range = document.createRange();
-                range.setStart(pos.offsetNode, pos.offset);
-                range.collapse(true);
-            }
-        }
-
-        if (!range) return null;
-
-        let node = range.startContainer;
-        let offset = range.startOffset;
-
-        // 2. A block's padding or empty space: the nearest text keeps the selection from jumping
-        if (node.nodeType === 1 && node.tagName !== 'INPUT' && node.tagName !== 'TEXTAREA' && node.childNodes.length) {
-            const atEnd = offset >= node.childNodes.length;
-            const point = normalizeSnapPoint(node, atEnd ? node.childNodes.length : offset, !atEnd);
-            if (point) ({ node, offset } = point);
-        }
-
-        // 3. Strict Check: Only return if we found a Text Node (or Input)
-        // This effectively ignores hits on "empty" container backgrounds that have no text.
-        if (node.nodeType === 3 || (node.nodeType === 1 && (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA'))) {
-            return { node, offset };
-        }
-
-        return null; 
-    }
-
-    /**
-     * Creates a range between two points, automatically handling start/end ordering.
-     */
-    function setSafeRange(p1, p2) {
-        if (!p1 || !p2) return;
-        const sel = window.getSelection();
-        
+    // DOM points in either order; the selection always runs forward. Returns where q is relative to p
+    // (-1 before, 0 at, 1 after), or null where they can't be compared (another document)
+    function setRange(p, q) {
         try {
             const r = document.createRange();
-            r.setStart(p1.node, p1.offset);
-            
-            // Check if p2 is before p1
-            const r2 = document.createRange();
-            r2.setStart(p2.node, p2.offset);
-            
-            if (r.compareBoundaryPoints(Range.START_TO_START, r2) <= 0) {
-                // p1 is before or equal to p2
-                r.setEnd(p2.node, p2.offset);
-            } else {
-                // p2 is before p1, flip
-                r.setStart(p2.node, p2.offset);
-                r.setEnd(p1.node, p1.offset);
-            }
-            
-            sel.removeAllRanges();
-            sel.addRange(r);
-            return r; // Return the valid range
+            r.setStart(p.node, p.offset);
+            const order = r.comparePoint(q.node, q.offset);
+            const [a, b] = order < 0 ? [q, p] : [p, q];
+            window.getSelection().setBaseAndExtent(a.node, a.offset, b.node, b.offset);
+            return order;
         } catch (e) {
-            // Squelch DOM errors (e.g. node in different documents)
             return null;
         }
+    }
+
+    // From an end that stays to one that moves, in either order: offsets in a plain field's value, DOM points
+    // anywhere else (snapshot.field tells which). Returns where the moving end is (as setRange)
+    function selectBetween(snap, fixed, moving) {
+        if (!snap.field) return setRange(fixed, moving);
+        const backward = moving < fixed;
+        snap.field.setSelectionRange(backward ? moving : fixed, backward ? fixed : moving, backward ? 'backward' : 'forward');
+        return Math.sign(moving - fixed);
+    }
+
+    // The next word on one side joins the selection (a handle released where it was): the same rule in
+    // fields, rich text and page text
+    function extendByWord(atStart) {
+        const s = surface(), r = s.precise && s.read(atStart ? { before: 'line' } : { after: 'line' });
+        if (!r) return;
+        const side = atStart ? r.before : r.after;
+        const words = [...segmenter.segment(side)].filter(w => w.isWordLike), w = atStart ? words[words.length - 1] : words[0];
+        if (w) s.select(atStart ? { before: { text: side.slice(w.index) } } : { after: { text: side.slice(0, w.index + w.segment.length) } });
     }
 
     // --- Snapping ---
 
     // Snapping: a selection's edges move out to whole words, and to a bracket or quote that pairs with
     // one inside it. One rule for fields, rich text and page text, across formatting.
-    function performSnap(enabled) {
-        if (!enabled) return;
+    function performSnap() {
         const s = surface();
         const r = s.precise && s.read({ before: READ_CAP, after: READ_CAP });
         if (!r || !r.text) return;
@@ -658,50 +555,19 @@
         return offset;
     }
 
-    function extendSelectionByWord(sel, dragHandleIndex) {
-        // Detect if selection is backwards
-        const range = document.createRange();
-        range.setStart(sel.anchorNode, sel.anchorOffset);
-        range.setEnd(sel.focusNode, sel.focusOffset);
-        const backwards = range.collapsed;
-        range.detach();
-
-        function extendForward() {
-            sel.modify("extend", backwards ? 'backward' : 'forward', "word");
-        }
-
-        function extendBackward() {
-            const endNode = sel.focusNode;
-            const endOffset = sel.focusOffset;
-            sel.collapse(sel.anchorNode, sel.anchorOffset);
-            
-            if (backwards) sel.modify("move", 'forward', "word");
-            else sel.modify("move", 'backward', "word");
-            
-            sel.extend(endNode, endOffset);
-        }
-
-        if (dragHandleIndex == 0) {
-            if (backwards) extendForward(); else extendBackward();
-        } else {
-            if (backwards) extendBackward(); else extendForward();
-        }
-    }
-
     window.LighthouseSelection = {
         getContext,
+        isCurrent,
+        current,
         getActiveSelection,
         needsTidy,
         caretToWordEnd,
-        visibleExtent,
         getLinkContext,
         insertText,
         surface,
         handleExpand,
         performSnap,
-        getPointFromCoords,
-        setSafeRange,
-        extendSelectionByWord,
-        isEditableElement
+        selectBetween,
+        extendByWord
     };
 })();

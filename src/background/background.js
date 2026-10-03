@@ -3,64 +3,22 @@
  * Handles persistent state migration and proxies API requests.
  */
 
-if( 'importScripts' in self ) {
-    try {
-      importScripts('../modules/math.js'); // Dependency of actions (rarely used at top level but safer)
-      importScripts('../utils/data.js'); // Dependency of actions
-      importScripts('../modules/actions.js');
-      importScripts('../utils/config.js'); 
-    } catch(e) {
-      // ignore if loaded via manifest bundle (rare in MV3 SW)
-    }
-}
+// The actions and the settings declared in config.js (for keeping stored settings current)
+importScripts('../modules/math.js', '../utils/data.js', '../modules/actions.js', '../utils/config.js');
 
-// --- Migration Logic ---
-chrome.runtime.onInstalled.addListener(async (details) => {
-    const Config = self.LighthouseConfig;
-    if (!Config) return; 
-
-    const defaults = Config.defaults;
-    
-    chrome.storage.sync.get(defaults, (items) => {
-        let dirty = false;
-
-        // 1. Sync 'order' array: Add new actions
-        const storedOrderSet = new Set(items.order);
-        // Config.actions is populated from LighthouseActions in config.js
-        const allActions = Config.actions || [];
-        
-        allActions.forEach(act => {
-            if (!storedOrderSet.has(act.id)) {
-                items.order.push(act.id);
-                if (items.enabled[act.id] === undefined) {
-                    items.enabled[act.id] = true;
-                }
-                dirty = true;
-            }
-        });
-
-        // 2. Clean 'order' array
-        const validIds = new Set(allActions.map(a => a.id));
-        const filteredOrder = items.order.filter(id => validIds.has(id));
-        if (filteredOrder.length !== items.order.length) {
-            items.order = filteredOrder;
-            dirty = true;
-        }
-
-        // 3. Ensure structure integrity
-        if (!items.searchEngines || !Array.isArray(items.searchEngines)) {
-            items.searchEngines = defaults.searchEngines;
-            dirty = true;
-        }
-
-        if (dirty) {
-            chrome.storage.sync.set(items, () => {
-            });
-        }
+// Stored settings after an install or update. Only what needs fixing is written, so a default stays a
+// default (a later version can improve it): invalid or unknown values are removed, so their defaults apply
+// again, and new actions join the end of a stored order (removed ones leave it). New actions are on: the default.
+chrome.runtime.onInstalled.addListener(() => {
+    const Config = self.LighthouseConfig, ids = Config.actions.map(a => a.id);
+    chrome.storage.sync.get(null, (stored) => {
+        const valid = Config.validOnly(stored), invalid = Object.keys(stored).filter(k => !(k in valid));
+        if (invalid.length) chrome.storage.sync.remove(invalid);
+        if (!valid.order) return;
+        const order = [...valid.order.filter(id => ids.includes(id)), ...ids.filter(id => !valid.order.includes(id))];
+        if (JSON.stringify(order) !== JSON.stringify(valid.order)) chrome.storage.sync.set({ order });
     });
-
-    // The collection used to be kept on disk; it now lives in session storage
-    chrome.storage.local.remove('copyStack');
+    chrome.storage.local.remove('copyStack');   // the collection used to be kept on disk; it now lives in session storage
 });
 
 // --- Network Gateway ---
@@ -139,15 +97,11 @@ const ensureOffscreen = async () => (await chrome.offscreen.hasDocument()) || aw
     { url: 'src/offscreen/offscreen.html', reasons: ['CLIPBOARD'], justification: 'Paste button and its preview' }).finally(() => { creating = null; }));
 ensureOffscreen().catch(() => {});
 
-async function handleReadClipboard(sender, sendResponse) {
-    try {
-        if (!sender.tab || !sender.tab.active) throw new Error('Not the active tab');   // only the tab in front
-        await ensureOffscreen();
-        const res = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'read-clipboard' });
-        sendResponse({ success: true, text: (res && res.text) || '' });
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
+async function readClipboard(sender) {
+    if (!sender.tab || !sender.tab.active) throw new Error('Not the active tab');   // only the tab in front
+    await ensureOffscreen();
+    const res = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'read-clipboard' });
+    return { text: (res && res.text) || '' };
 }
 
 // --- Favicons (_favicon is not web-accessible: pages could read the cache, i.e. your history) ---
@@ -168,112 +122,95 @@ const storedFavicon = async (pageUrl) => {
     return icon === blank ? null : icon;
 };
 
-async function handleFavicon(url, iconUrl, from, sendResponse) {
-    try {
-        const page = new URL(url);
-        const { favicons = {} } = await chrome.storage.session.get('favicons');   // site (origin) -> icon, or false: none found
-        let icon = await storedFavicon(page.href) || await storedFavicon(page.origin + '/') || favicons[page.origin];
-        if (icon === undefined && iconUrl && await previewsAllowed()) {
-            icon = await gatewayFetch(iconUrl, { anyHost: true, from, timeout: 5000, image: true }).then(blobToDataUrl, () => false);
-        }
-        if (icon !== undefined && favicons[page.origin] !== icon) {
-            const keep = Object.entries(favicons).slice(-199);   // a bounded memory: the newest 200 sites
-            await chrome.storage.session.set({ favicons: { ...Object.fromEntries(keep), [page.origin]: icon } });
-        }
-        sendResponse(icon ? { success: true, dataUrl: icon } : { success: false, none: icon === false, error: 'No icon' });
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
+async function favicon(url, iconUrl, from) {
+    const page = new URL(url);
+    const { favicons = {} } = await chrome.storage.session.get('favicons');   // site (origin) -> icon, or false: none found
+    let icon = await storedFavicon(page.href) || await storedFavicon(page.origin + '/') || favicons[page.origin];
+    if (icon === undefined && iconUrl && await previewsAllowed()) {
+        icon = await gatewayFetch(iconUrl, { anyHost: true, from, timeout: 5000, image: true }).then(blobToDataUrl, () => false);
     }
+    if (icon !== undefined && favicons[page.origin] !== icon) {
+        const keep = Object.entries(favicons).slice(-199);   // a bounded memory: the newest 200 sites
+        await chrome.storage.session.set({ favicons: { ...Object.fromEntries(keep), [page.origin]: icon } });
+    }
+    return icon ? { dataUrl: icon } : { success: false, none: icon === false, error: 'No icon' };
+}
+
+// --- Requests from the page ---
+// Each service returns its reply (or throws); the router sends it as { success: true, ... } or
+// { success: false, error }. Only these services exist: a page can't ask for anything else.
+const SERVICES = {
+    READ_CLIPBOARD: (r, sender) => readClipboard(sender),
+    FAVICON: (r, sender) => favicon(r.url, r.iconUrl, sender.tab && sender.tab.url),
+    GET_RATE: (r) => rate(r.base, r.target),
+    TRANSLATE: async (r) => ({ result: await translateText(r.text, r.targetLang) }),
+    DEFINE: (r) => define(r.text, r.wordLang, r.targetLang, r.readerLangs),
+    SPELLCHECK: (r) => spellcheck(r.text, r.language),
+    WIKI_SUMMARY: (r) => wikiSummary(r.lang, r.title),
+    LINK_PREVIEW: (r, sender) => linkPreview(r.url, sender.tab && sender.tab.url),
+    AMOUNT_WORDS: (r) => amountWords(r.langs)
+};
+
+// The words for prices and measurements in some languages (math.js builds them from what the browser knows):
+// built once per set of languages and kept, so pages only read them. The newest few sets are kept.
+async function amountWords(langs) {
+    const key = [...new Set((Array.isArray(langs) ? langs : []).filter(l => /^[a-z]{2,3}$/.test(l)))].sort().slice(0, 6).join(',');
+    const { amountWords: kept = {} } = await chrome.storage.local.get('amountWords');
+    if (!kept[key]) {
+        const recent = Object.entries(kept).slice(-2);
+        await chrome.storage.local.set({ amountWords: { ...Object.fromEntries(recent), [key]: self.LighthouseMath.buildWords(key ? key.split(',') : []) } });
+        return { result: (await chrome.storage.local.get('amountWords')).amountWords[key] };
+    }
+    return { result: kept[key] };
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request && request.target === 'offscreen') return;   // meant for the hidden page, not here
-    const actions = {
-        'READ_CLIPBOARD': () => handleReadClipboard(sender, sendResponse),
-        'FAVICON': () => handleFavicon(request.url, request.iconUrl, sender.tab && sender.tab.url, sendResponse),
-        'GET_RATE': () => handleGetRate(request.base, request.target, sendResponse),
-        'TRANSLATE': () => handleTranslate(request.text, request.targetLang, sendResponse),
-        'DEFINE': () => handleDefine(request.text, request.wordLang, request.targetLang, request.readerLangs, sendResponse),
-        'SPELLCHECK': () => handleSpellcheck(request.text, request.language, sendResponse),
-        'WIKI_SUMMARY': () => handleWikiSummary(request.lang, request.title, sendResponse),
-        'LINK_PREVIEW': () => handleLinkPreview(request.url, sender.tab && sender.tab.url, sendResponse)
-    };
-
-    if (actions[request.action]) {
-        actions[request.action]();
-        return true;
-    }
+    const service = request && SERVICES[request.action];
+    if (!service) return;
+    Promise.resolve().then(() => service(request, sender)).then(
+        (reply) => sendResponse({ success: true, ...reply }),
+        (error) => sendResponse({ success: false, error: error.message }));
+    return true;   // the reply comes later
 });
 
-/**
- * Fetch through the gateway and reply to the content script
- */
-async function _fetch(url, sendResponse, transform = (t) => t) {
-    try {
-        const text = await gatewayFetch(url);
-        sendResponse({ success: true, result: transform(text) });
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
-}
-
 // Article summary for the Wiki preview
-function handleWikiSummary(lang, title, sendResponse) {
-    if (!/^[a-z]{2,3}(-[a-z]+)?$/i.test(lang || '') || !title) return sendResponse({ success: false, error: 'Invalid request' });
-    _fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`, sendResponse, JSON.parse);
+async function wikiSummary(lang, title) {
+    if (!/^[a-z]{2,3}(-[a-z]+)?$/i.test(lang || '') || !title) throw new Error('Invalid request');
+    return { result: JSON.parse(await gatewayFetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`)) };
 }
 
 // Link preview (opt-in): fetches the hovered page itself, only its <head>, without cookies.
 // Only when the user turned previews on and granted the permission Chrome asked for.
 async function previewsAllowed() {
-    const { linkPreviews } = await new Promise(r => chrome.storage.sync.get({ linkPreviews: false }, r));
+    const { linkPreviews } = await chrome.storage.sync.get({ linkPreviews: self.LighthouseConfig.defaults.linkPreviews });
     return linkPreviews && await chrome.permissions.contains({ origins: ['https://*/*', 'http://*/*'] });
 }
 
-async function handleLinkPreview(url, from, sendResponse) {
-    try {
-        if (!await previewsAllowed()) return sendResponse({ success: false, error: 'Link previews are off' });
-        const head = await gatewayFetch(url, { anyHost: true, from, timeout: 5000, cutAt: '</head>' });
-        sendResponse({ success: true, result: head });
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
+async function linkPreview(url, from) {
+    if (!await previewsAllowed()) throw new Error('Link previews are off');
+    return { result: await gatewayFetch(url, { anyHost: true, from, timeout: 5000, cutAt: '</head>' }) };
 }
 
-// --- Currency Rate Handling ---
+// --- Currency rates: per 1 USD, kept for a day ---
 const RATES_CACHE_KEY = 'lighthouse_rates_cache';
-const CACHE_DURATION = 24 * 60 * 60 * 1000; 
+const CACHE_DURATION = 24 * 60 * 60 * 1000;
 
-const getStorageLocal = (key) => new Promise((resolve) => chrome.storage.local.get(key, resolve));
-const setStorageLocal = (obj) => new Promise((resolve) => chrome.storage.local.set(obj, resolve));
-
-// Rates are per 1 USD. A currency missing from them (or an unusable value) is a failure, never NaN.
-// asOf: when the rates were fetched (they are kept for a day)
-function rateResponse(rates, base, target, asOf) {
+// A currency missing from the rates (or an unusable value) is a failure, never NaN. asOf: when they were fetched
+function rateFrom(rates, base, target, asOf) {
     const perUsd = (code) => code === 'USD' ? 1 : parseFloat(rates && rates[code]);
     const rate = perUsd(target) / perUsd(base);
-    return Number.isFinite(rate) && rate > 0 ? { success: true, rate, asOf } : { success: false, error: 'Rate unavailable' };
+    return Number.isFinite(rate) && rate > 0 ? { rate, asOf } : { success: false, error: 'Rate unavailable' };
 }
 
-async function handleGetRate(base, target, sendResponse) {
-    try {
-        const data = await getStorageLocal(RATES_CACHE_KEY);
-        let cached = data[RATES_CACHE_KEY];
-        const now = Date.now();
-
-        if (cached && cached.timestamp && (now - cached.timestamp < CACHE_DURATION)) {
-            return sendResponse(rateResponse(cached.rates, base, target, cached.timestamp));
-        }
-
-        _fetch('https://api.coinbase.com/v2/exchange-rates?currency=USD', (res) => {
-            if (!res.success) return sendResponse(res);
-            const rates = res.result && res.result.data && res.result.data.rates;
-            if (rates) setStorageLocal({ [RATES_CACHE_KEY]: { timestamp: now, rates } });   // never cache a malformed reply
-            sendResponse(rateResponse(rates, base, target, now));
-        }, JSON.parse);
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
+async function rate(base, target) {
+    const { [RATES_CACHE_KEY]: cached } = await chrome.storage.local.get(RATES_CACHE_KEY);
+    const now = Date.now();
+    if (cached && cached.timestamp && now - cached.timestamp < CACHE_DURATION) return rateFrom(cached.rates, base, target, cached.timestamp);
+    const reply = JSON.parse(await gatewayFetch('https://api.coinbase.com/v2/exchange-rates?currency=USD'));
+    const rates = reply && reply.data && reply.data.rates;
+    if (rates) await chrome.storage.local.set({ [RATES_CACHE_KEY]: { timestamp: now, rates } });   // never cache a malformed reply
+    return rateFrom(rates, base, target, now);
 }
 
 async function translateText(text, targetLang = 'en') {
@@ -286,24 +223,16 @@ async function translateText(text, targetLang = 'en') {
     };
 }
 
-async function handleTranslate(text, targetLang = 'en', sendResponse) {
-    try {
-        sendResponse({ success: true, result: await translateText(text, targetLang) });
-    } catch (error) {
-        sendResponse({ success: false, error: error.message });
-    }
-}
-
 // --- Define ---
 // English Wiktionary (the only edition with the endpoint) covers every language, in English:
 // the entry for the word's language, translated for readers without English, plus a link.
 const decodeEntities = (s) => s.replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
-async function handleDefine(text, wordLang, targetLang, readerLangs, sendResponse) {
-    const baseOf = (l) => String(l || '').toLowerCase().split(/[-_]/)[0];
+async function define(text, wordLang, targetLang, readerLangs) {
+    const baseOf = self.LighthouseData.baseLanguage;
     const word = String(text || '').trim();
-    if (!word || word.length > 100) return sendResponse({ success: false, error: 'Invalid request' });
+    if (!word || word.length > 100) throw new Error('Invalid request');
     const target = /^[a-z]{2,3}$/.test(baseOf(targetLang)) ? baseOf(targetLang) : 'en';
     const readers = new Set([target, ...(readerLangs || []).map(baseOf)].filter(Boolean));
     const link = `https://${target}.wiktionary.org/wiki/${encodeURIComponent(word)}`;
@@ -321,14 +250,14 @@ async function handleDefine(text, wordLang, targetLang, readerLangs, sendRespons
             .find(Boolean);
         if (!definition) continue;
         // language: which language the word was read as (its entry), e.g. 'Gift' as German or English
-        if (readers.has('en')) return sendResponse({ success: true, result: { definition, translated: false, language: key, link } });
+        if (readers.has('en')) return { result: { definition, translated: false, language: key, link } };
         try {
             const t = await translateText(definition, target);
-            if (t.text) return sendResponse({ success: true, result: { definition: t.text, translated: true, language: key, link } });
+            if (t.text) return { result: { definition: t.text, translated: true, language: key, link } };
         } catch (e) { /* fall through to the link */ }
-        return sendResponse({ success: true, result: { definition: null, link } });
+        return { result: { definition: null, link } };
     }
-    sendResponse({ success: true, result: { definition: null, link } });
+    return { result: { definition: null, link } };
 }
 
 // --- Spelling and grammar (LanguageTool) ---
@@ -360,16 +289,14 @@ async function checkText(text, language) {
     return { issues, language: (data.language && data.language.code) || null };
 }
 
-async function handleSpellcheck(text, language, sendResponse) {
-    if (!text || text.length > 600) return sendResponse({ success: false, error: 'Invalid request' });
-    const base = String(language || '').toLowerCase().split(/[-_]/)[0];
+async function spellcheck(text, language) {
+    if (!text || text.length > 600) throw new Error('Invalid request');
+    const base = self.LighthouseData.baseLanguage(language);
     const lang = /^[a-z]{2,3}$/.test(base) ? (ltVariant(base) || base) : 'auto';
     try {
-        sendResponse({ success: true, result: await checkText(text, lang) });
+        return { result: await checkText(text, lang) };
     } catch (error) {
-        // A language LanguageTool doesn't know: let it detect instead
-        if (lang === 'auto') return sendResponse({ success: false, error: error.message });
-        try { sendResponse({ success: true, result: await checkText(text, 'auto') }); }
-        catch (e) { sendResponse({ success: false, error: e.message }); }
+        if (lang === 'auto') throw error;
+        return { result: await checkText(text, 'auto') };   // a language LanguageTool doesn't know: let it detect instead
     }
 }

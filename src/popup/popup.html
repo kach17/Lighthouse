@@ -61,23 +61,23 @@
     <section id="tab-settings" class="tab-content">
       <h2 class="lh-section-title">Behaviour</h2>
       <div class="lh-row lh-toggle">
-        <input type="checkbox" id="toggle-snapping" class="lh-visually-hidden">
+        <input type="checkbox" id="toggle-snapping" data-setting="smartSnapping" class="lh-visually-hidden">
         <label class="lh-row-text" for="toggle-snapping"><span>Select whole words</span></label>
         <div class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></div>
       </div>
       <div class="lh-row lh-toggle">
-        <input type="checkbox" id="toggle-handles" class="lh-visually-hidden">
+        <input type="checkbox" id="toggle-handles" data-setting="addDragHandles" class="lh-visually-hidden">
         <label class="lh-row-text" for="toggle-handles"><span>Selection handles</span><small>Drag the ends of a selection to adjust it</small></label>
         <div class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></div>
       </div>
       <div class="lh-row lh-toggle">
-        <input type="checkbox" id="toggle-tidy" class="lh-visually-hidden">
+        <input type="checkbox" id="toggle-tidy" data-setting="tidySpacing" class="lh-visually-hidden">
         <label class="lh-row-text" for="toggle-tidy"><span>Tidy spacing</span><small>When you delete, cut or paste</small></label>
         <div class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></div>
       </div>
       <div class="lh-row p-static">
         <span class="lh-row-text"><span>Brackets and quotes</span><small>Wrap a selection, or also close them as you type</small></span>
-        <div class="lh-seg is-control" id="brackets-mode" role="radiogroup" aria-label="Brackets and quotes">
+        <div class="lh-seg is-control" id="brackets-mode" data-setting="brackets" role="radiogroup" aria-label="Brackets and quotes">
           <button class="lh-seg-btn" data-mode="off" role="radio">Off</button><button class="lh-seg-btn" data-mode="wrap" role="radio">Wrap</button><button class="lh-seg-btn" data-mode="close" role="radio">Close</button>
         </div>
       </div>
@@ -100,7 +100,7 @@
 
       <h2 class="lh-section-title">Appearance</h2>
       <div class="lh-row lh-toggle">
-        <input type="checkbox" id="toggle-labels" class="lh-visually-hidden">
+        <input type="checkbox" id="toggle-labels" data-setting="showLabels" class="lh-visually-hidden">
         <label class="lh-row-text" for="toggle-labels"><span>Button labels</span><small>Names next to the icons in the bar</small></label>
         <div class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></div>
       </div>

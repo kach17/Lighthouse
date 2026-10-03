@@ -43,10 +43,9 @@
     }
 
     function markTextSelection(text, color) {
-        const Sel = window.LighthouseSelection, sel = Sel.getActiveSelection();
-        if (!sel || !sel.rangeCount || sel.isCollapsed) return;
-        const ext = Sel.visibleExtent(sel);
-        const range = (ext ? ext.range : sel.getRangeAt(0)).cloneRange();
+        const snap = window.LighthouseSelection.current(), drawn = snap.range && !snap.range.collapsed && snap.edges('content');
+        if (!drawn) return;
+        const range = drawn.range.cloneRange();   // the text without edge whitespace
         if (range.commonAncestorContainer.getRootNode() !== document) return;   // inside a component's shadow DOM: not supported
         if (!highlights[color]) CSS.highlights.set('lighthouse-' + color, highlights[color] = new Highlight());
         highlights[color].add(range);

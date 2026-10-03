@@ -1,211 +1,89 @@
 /**
  * Lighthouse - Main Controller
+ * Connects the input manager's events to the pipeline (selectionChanged) and to the bar's state machine.
  */
 (function () {
-    const UI = window.LighthouseUI;
-    const SelLib = window.LighthouseSelection;
-    const State = window.LighthouseState;
-    const $ = window.LighthouseUtils;
+    const UI = window.LighthouseUI, SelLib = window.LighthouseSelection, State = window.LighthouseState;
+    const Handles = window.LighthouseHandles, Input = window.LighthouseInput, $ = window.LighthouseUtils;
 
-    let linkHoverTimer = null;
-    let linkDestroyTimer = null;
-    let interactionTimer = null;
-    let idleTimer = null;
-
-    function forceCleanup() {
-        State.mode = 'HIDDEN';
-        UI.destroy();
-        if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
-    }
+    let linkHoverTimer = null, linkDestroyTimer = null, interactionTimer = null;
+    const close = () => State.send('close');
 
     function init() {
         State.init();
-        if (UI.init) UI.init();
+        UI.init();
+        Handles.onRelease(() => selectionChanged('drag'));   // a released handle: the same pipeline
+        // The words for prices and measurements in this reader's languages and the page's, once the page is idle
+        requestIdleCallback(() => window.LighthouseMath.loadWords([...window.LighthouseLanguage.userLanguages(), window.LighthouseData.baseLanguage(window.LighthouseLanguage.pageLanguage())]));
+        UI.onDestroy(() => [linkHoverTimer, linkDestroyTimer, interactionTimer].forEach(clearTimeout));
 
-        if (UI.onDestroy) {
-            UI.onDestroy(() => {
-                clearTimeout(linkHoverTimer);
-                clearTimeout(linkDestroyTimer);
-                clearTimeout(interactionTimer);
-            });
-        }
-        const globalEventHandler = (e) => {
-            switch (e.type) {
-                case 'mousedown':
-                    // Third click of a triple-click: the browser selects the paragraph right away, so
-                    // the bar leaves now (fading where it was) and rises in for the paragraph once the
-                    // click completes, instead of lingering beside the word and then jumping
-                    if (e.detail === 3 && e.button === 0 && State.mode !== 'HIDDEN' && !UI.contains(e.target)) forceCleanup();
-                    break;
-                case 'mouseup':
-                    handleInteraction(e);
-                    break;
-                case 'mouseover':
-                    handleLinkHover(e);
-                    break;
-                case 'mouseout':
-                    if (e.target.closest('a') || UI.contains(e.target)) {
-                        clearTimeout(linkHoverTimer);
-                        linkDestroyTimer = setTimeout(() => {
-                            if (!UI.contains(e.relatedTarget) && State.mode === 'LINK' && !window.getSelection().toString()) {
-                                forceCleanup();
-                            }
-                        }, 200);
-                    }
-                    break;
-                case 'scroll':
-                case 'resize':
-                    // A handle drag owns the selection (and auto-scrolls the page); the bar stays
-                    // hidden and the handles are positioned by the drag itself until it ends.
-                    if (window.LighthouseHandles && window.LighthouseHandles.isDragging) break;
-                    if (State.mode !== 'HIDDEN' && State.validate()) {
-                        UI.updatePosition(State.ctx);
-                        if (window.LighthouseHandles && State.ctx.hasText) window.LighthouseHandles.setDragHandles();
-                    } else {
-                        forceCleanup();
-                    }
-                    break;
-                case 'dragstart':
-                case 'blur':
-                    if (State.mode !== 'HIDDEN') forceCleanup();
-                    break;
-                case 'selectionchange': {
-                    if (UI.isActionActive && UI.isActionActive()) return;
-                    if (State.mode === 'SNIPPET_MENU') return;
-                    if (Input.hasSelection()) break;
-                    // In a field the caret-only bar stays; a bar for a selection has nothing left to act on
-                    const el = document.activeElement;
-                    if (Input.fieldKind(el)) {
-                        if (State.mode !== 'HIDDEN' && State.ctx && State.ctx.hasText) forceCleanup();
-                        return;
-                    }
-                    forceCleanup();
-                    break;
-                }
-            }
-        };
+        // What the state machine (state.js) shows, moves and hides
+        State.connect({
+            show: (withHandles, inPlace) => { UI.render(State, { inPlace }); if (withHandles) Handles.show(); },
+            place: (withHandles) => { UI.updatePosition(State.ctx); if (withHandles) Handles.show(); },
+            hide: (barOnly) => { UI.destroy(); if (!barOnly) Handles.hide(); }
+        });
 
-        // Document Events
-
-        // All user input goes through the input manager (input.js), which owns the
-        // listeners and the shared filters, and attaches nothing on switched-off sites.
-        const Input = window.LighthouseInput;
+        // All input goes through the input manager (input.js): it attaches only what the active scopes
+        // need, and nothing on switched-off sites. Each event becomes one pipeline run or one named event.
+        // Order matters: a handler that returns true has handled the event, and later ones are skipped.
+        const on = (type, scope, handler, extra = {}) => Input.on({ type, scope, handler: (e) => handler(e) || false, ...extra });
+        const editor = { inManagedEditors: true };
 
         // While the bar is open: Escape closes it, Tab accepts the first snippet
-        Input.on({ type: 'keydown', scope: 'bar', keys: ['Escape'], handler: () => { forceCleanup(); return true; } });
-        Input.on({
-            type: 'keydown', scope: 'bar', keys: ['Tab'],
-            handler: (e) => {
-                if (State.mode !== 'SNIPPET_MENU' || !State.activeActions || !State.activeActions.length) return false;
-                e.preventDefault();
-                State.activeActions[0].execute();
-                forceCleanup();
-                return true;
-            }
-        });
+        on('keydown', 'bar', () => { close(); return true; }, { keys: ['Escape'] });
+        on('keydown', 'bar', (e) => {
+            if (State.mode !== 'SNIPPET_MENU' || !State.activeActions.length) return;
+            e.preventDefault();
+            State.activeActions[0].execute();
+            close();
+            return true;
+        }, { keys: ['Tab'] });
+        // Keyboard selections (Shift / arrows); only while there is a selection to extend or a field is focused
+        on('keyup', ['selection', 'editable'], (e) => selectionChanged('key', e),
+            { afterSelecting: true, keys: ['Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'], ...editor });
+        // In a field: an edit about to happen (also one the page makes itself, which sends no input event),
+        // leaving it (coming back is a first click again), and typing (snippets)
+        on('beforeinput', 'editable', () => State.send('edit'), editor);
+        on('keydown', 'editable', () => State.send('edit'), { keys: ['Backspace', 'Delete'], ...editor });
+        on('focusout', 'editable', (e) => State.send('fieldLeft', { to: e.relatedTarget }), editor);
+        on('input', 'editable', (e) => { if (!State.acting) { handleTextExpansion(e); State.send('typed'); } }, editor);
+        window.LighthouseEditing.init({ onEdit: close });   // tidy spacing, brackets and quotes
 
-        // Keyboard selections (Shift / Arrow keys) show the bar. Only listened to while there is
-        // a selection to extend or a field is focused, so no keys are listened to at rest.
-        Input.on({
-            type: 'keyup', scope: ['selection', 'editable'], afterSelecting: true, inManagedEditors: true,
-            keys: ['Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'],
-            handler: (e) => { handleInteraction(e); return false; }
-        });
+        // The third click of a triple-click: the bar leaves now and returns for the paragraph
+        on('mousedown', 'page', (e) => { if (e.detail === 3 && e.button === 0 && State.mode !== 'HIDDEN' && !UI.contains(e.target)) close(); });
+        on('mouseup', 'page', (e) => selectionChanged('pointer', e));
+        on('mouseover', 'page', handleLinkHover);
+        on('mouseout', 'page', handleLinkOut);
+        on('dragstart', 'page', () => { if (State.mode !== 'HIDDEN') close(); });
+        on('selectionchange', 'page', () => { if (!Input.hasSelection()) State.send('selectionLost', { inField: !!Input.fieldKind(Input.focusedElement()) }); });
+        on('scroll', 'page', () => State.send('moved'));
+        on('resize', 'page', () => State.send('moved'));
+        on('blur', 'page', () => { if (State.mode !== 'HIDDEN') close(); });
+        window.LighthouseMarkers.init();
 
-        // An edit is about to happen: the bar steps away, also when the page makes the edit itself (then
-        // no input event follows, and editors that handle Backspace/Delete on the key don't send beforeinput)
-        const stepAway = () => { if (State.mode !== 'SNIPPET_MENU' && !(UI.isActionActive && UI.isActionActive())) forceCleanup(); return false; };
-        Input.on({ type: 'beforeinput', scope: 'editable', inManagedEditors: true, handler: stepAway });
-        Input.on({ type: 'keydown', scope: 'editable', inManagedEditors: true, keys: ['Backspace', 'Delete'], handler: stepAway });
-
-        // Leaving a field (clicking elsewhere, Tab): coming back is a first click again, which shows the
-        // bar; clicks while staying in the field still don't
-        Input.on({
-            type: 'focusout', scope: 'editable', inManagedEditors: true,
-            handler: (e) => {
-                const field = State.lastFocusedInput;
-                if (field && !(e.relatedTarget && field.contains(e.relatedTarget))) State.lastFocusedInput = null;
-                return false;
-            }
-        });
-
-        // Typing in a field: snippet detection, and the bar steps away
-        Input.on({
-            type: 'input', scope: 'editable', inManagedEditors: true,
-            handler: (e) => {
-                if (UI.isActionActive && UI.isActionActive()) return false;
-                handleTextExpansion(e);
-                if (State.mode !== 'SNIPPET_MENU') {
-                    forceCleanup();
-                    clearTimeout(idleTimer);
-                    idleTimer = setTimeout(() => { State.lastFocusedInput = null; }, 3000);
-                }
-                return false;
-            }
-        });
-
-        // Smart editing helpers (tidy spacing, brackets and quotes)
-        if (window.LighthouseEditing) window.LighthouseEditing.init({ onEdit: forceCleanup });
-
-        // Window Events
-        // Pointer, selection and window events
-        ['mousedown', 'mouseup', 'mouseover', 'mouseout', 'dragstart', 'selectionchange', 'scroll', 'resize', 'blur']
-            .forEach(type => Input.on({ type, scope: 'page', handler: globalEventHandler }));
-
-        // Initialize Markers
-        if (window.LighthouseMarkers) {
-            window.LighthouseMarkers.init();
-        }
-
-        // Message Listener
-        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            if (request.type === 'LIGHTHOUSE_CONVERT_ALL') {
-                convertAllOnPage();
-            }
-        });
+        chrome.runtime.onMessage.addListener((request) => { if (request.type === 'LIGHTHOUSE_CONVERT_ALL') convertAllOnPage(); });
     }
 
     // Called by the "Convert page" item and the popup. Not a page event: pages can't trigger it.
-    window.LighthouseContent = { convertAllOnPage: () => convertAllOnPage() };
+    // refresh: the bar stays after an action (keepOpen) and shows what fits the selection now
+    window.LighthouseContent = { convertAllOnPage: () => convertAllOnPage(), refresh: () => selectionChanged('refresh') };
 
+    // Every price and measurement in the page's text, in the user's currency and units
     async function convertAllOnPage() {
-        const Config = window.LighthouseConfig;
-        const std = State.get('standards', null) || Config.defaults.standards;
-        const targetCurrency = std.currency || 'USD';
-        const targetUnitSystem = std.units || 'metric';
-
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-            acceptNode: function (node) {
-                if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA'].includes(node.parentNode.nodeName)) return NodeFilter.FILTER_REJECT;
-                if (node.parentNode.classList && (node.parentNode.classList.contains('lighthouse-converted') || node.parentNode.classList.contains('lighthouse-converted-price'))) return NodeFilter.FILTER_REJECT;
-                if (node.parentNode.isContentEditable) return NodeFilter.FILTER_REJECT;
-                return NodeFilter.FILTER_ACCEPT;
-            }
-        }, false);
-
-        const textNodes = [];
-        let node;
-        while (node = walker.nextNode()) {
-            if (node.nodeValue.trim() !== '') {
-                textNodes.push(node);
-            }
-        }
-
-        const safeFetchRate = window.LighthouseMath.fetchRate;
-
-        for (const textNode of textNodes) {
-            let originalText = textNode.nodeValue;
-            let newText = originalText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-            if (!window.LighthouseMath || !window.LighthouseMath.convertAllText) continue;
-            const result = await window.LighthouseMath.convertAllText(newText, targetCurrency, targetUnitSystem, safeFetchRate);
-
-            if (result.modified) {
-                const span = document.createElement('span');
-                span.classList.add('lighthouse-converted');
-                span.innerHTML = result.text;
-                textNode.parentNode.replaceChild(span, textNode);
-            }
+        const { currency, units } = State.get('standards');
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: (node) => {
+            const el = node.parentNode;
+            if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA'].includes(el.nodeName) || el.isContentEditable) return NodeFilter.FILTER_REJECT;
+            if (el.classList && (el.classList.contains('lighthouse-converted') || el.classList.contains('lighthouse-converted-price'))) return NodeFilter.FILTER_REJECT;
+            return node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        } });
+        const nodes = [];
+        for (let n; (n = walker.nextNode());) nodes.push(n);
+        for (const node of nodes) {
+            const text = await window.LighthouseMath.convertText(node.nodeValue, currency, units);
+            if (text === null) continue;
+            node.parentNode.replaceChild($.create('span', { className: 'lighthouse-converted', text }), node);
         }
     }
 
@@ -229,13 +107,13 @@
         // Must contain //
         const matchPos = currentLineText.lastIndexOf('//');
         if (matchPos === -1) {
-            if (State.mode === 'SNIPPET_MENU') forceCleanup();
+            State.send('snippetsGone');
             return;
         }
 
         // Must start at index 0 or immediately follow a space
         if (matchPos > 0 && currentLineText[matchPos - 1] !== ' ') {
-            if (State.mode === 'SNIPPET_MENU') forceCleanup();
+            State.send('snippetsGone');
             return;
         }
 
@@ -250,7 +128,7 @@
         const rawTrigger = triggerTextWithSlashes.substring(2);
         const triggerTextForMatch = (isSpace || isEnter) ? rawTrigger.substring(0, rawTrigger.length - (spaceInValue ? 1 : 0)).trim() : rawTrigger.trim();
 
-        const shortcuts = State.get('shortcuts', []);
+        const shortcuts = State.get('shortcuts');
         let matches = shortcuts.filter(s => s.trigger.startsWith(triggerTextForMatch));
 
         // Handle actual expansion if Space/Enter pressed
@@ -265,10 +143,10 @@
                         smartPunctuation: true,
                         appendSpace: isSpace
                     });
-                    forceCleanup();
+                    close();
                 }
             } else {
-                if (State.mode === 'SNIPPET_MENU') forceCleanup();
+                State.send('snippetsGone');
             }
             return;
         }
@@ -280,10 +158,7 @@
             ctx.text = triggerTextWithSlashes;
             ctx.hasText = true;
 
-            State.ctx = ctx;
-            State.mode = 'SNIPPET_MENU';
-
-            State.activeActions = matches.slice(0, 4).map((match, i) => ({
+            State.send('snippets', { ctx, actions: matches.slice(0, 4).map((match, i) => ({
                 id: 'snippet-' + i,
                 label: match.trigger,
                 icon: 'chat',
@@ -300,87 +175,56 @@
                 preview: () => ({
                     node: $.create('div', { className: 'lh-snippet', text: match.expansion })
                 })
-            }));
-
-            UI.render(State);
+            })) });
         } else {
-            if (State.mode === 'SNIPPET_MENU') forceCleanup();
+            State.send('snippetsGone');
         }
     }
 
-    function handleInteraction(e) {
-        if ((UI.isActionActive && UI.isActionActive())) return;
-        if (State.isDisabledHere() || UI.contains(e.target)) return;
-        if (window.LighthouseHandles && window.LighthouseHandles.isDragging) return;
-
-        State.lastEvent = e;
-
-        // Triple click delay
-        const delay = e && e.detail === 3 ? 200 : 0;
-
+    // The one way a changed selection reaches the bar. reason: 'pointer' (a mouse up, a click into a field),
+    // 'key' (a selecting key), 'drag' (a handle released) or 'refresh' (an action that keeps the bar open). Waits for a triple-click to land, reads the
+    // selection, snaps a pointer selection (then reads it again), and once its language is known shows the
+    // bar, if the selection is still the one that was read.
+    function selectionChanged(reason, e = null) {
+        const refresh = reason === 'refresh';
+        if ((State.busy && !refresh) || State.isDisabledHere()) return;   // a keep-open action or a drag owns the selection
+        if (e) {
+            if (UI.contains(e.target) || UI.pressed) return;   // a click on the bar, not on the page
+            State.lastEvent = e;
+        }
+        const pointer = reason === 'pointer' ? e : null;
         clearTimeout(interactionTimer);
         interactionTimer = setTimeout(async () => {
-            const ctx = SelLib.getContext();
-
-            // Capture Mouse Coordinates for Pointer-Relative Positioning
-            if (e && e.type === 'mouseup') {
-                ctx.mouseX = e.clientX;
-                ctx.mouseY = e.clientY;
+            let ctx = SelLib.getContext(pointer);
+            if (pointer && ctx.hasText && State.get('smartSnapping')) {
+                try { SelLib.performSnap(); ctx = SelLib.getContext(pointer); } catch (err) { /* text it can't snap: as selected */ }
             }
-
-            if (State.get('smartSnapping', true) && e && e.type === 'mouseup' && ctx.hasText) {
-                try {
-                    SelLib.performSnap(true);
-                    // Re-fetch context but preserve mouse data
-                    const snapCtx = SelLib.getContext();
-                    Object.assign(ctx, snapCtx);
-                } catch (err) {
-                    window.LighthouseUtils.Logger.warn('Lighthouse: Snap error', err);
-                }
-            }
-
-            // Decided once per selection, on-device (at most a few ms): the text's language, and
-            // whether it is foreign to the user
-            if (window.LighthouseLanguage) {
-                const { foreign, language, reliable } = await window.LighthouseLanguage.inspect(ctx);
-                ctx.foreign = foreign;
-                ctx.language = language;
-                ctx.languageReliable = reliable === true;
-                if (SelLib.getContext().text !== ctx.text) return;   // changed meanwhile (e.g. already deleted)
-            }
-
-            State.update(ctx);
-            if (State.mode === 'HIDDEN') {
-                UI.destroy();
-                if (window.LighthouseHandles) window.LighthouseHandles.hideDragHandles();
-            } else {
-                UI.render(State);
-                if (window.LighthouseHandles && ctx.hasText) {
-                    window.LighthouseHandles.setDragHandles();
-                }
-            }
-        }, delay);
+            const { foreign, language, reliable } = await ctx.snapshot.language;   // on-device, at most a few ms
+            if (!SelLib.isCurrent(ctx.snapshot)) return;   // changed meanwhile (e.g. already deleted)
+            Object.assign(ctx, { foreign, language, languageReliable: reliable === true });
+            State.send('selected', { ctx, inPlace: refresh });
+        }, pointer && pointer.detail === 3 ? 200 : 0);   // a triple-click's paragraph lands after the click
     }
 
+    // Hovering an external link shows its bar; leaving it (and not into the bar) closes that bar
     function handleLinkHover(e) {
-        // Clear destroy timer if we entered UI or a Link
-        if (UI.contains(e.target) || e.target.closest('a')) {
-            clearTimeout(linkDestroyTimer);
-        }
-
+        if (UI.atLastPress(e)) return;   // the pointer hasn't moved since a click on the bar: the bar closed over the link
         const link = e.target.closest('a');
+        if (link || UI.contains(e.target)) clearTimeout(linkDestroyTimer);
         if (!link || link.hostname === window.location.hostname || UI.contains(e.target)) return;
-
         clearTimeout(linkHoverTimer);
         linkHoverTimer = setTimeout(() => {
-            if (!window.getSelection().toString()) {
-                const linkCtx = SelLib.getLinkContext(link);
-                if (linkCtx) {
-                    State.update(linkCtx);
-                    if (State.mode === 'LINK') UI.render(State);
-                }
-            }
+            const ctx = !window.getSelection().toString() && SelLib.getLinkContext(link);
+            if (ctx) State.send('link', { ctx });
         }, 400);
+    }
+
+    function handleLinkOut(e) {
+        if (!e.target.closest('a') && !UI.contains(e.target)) return;
+        clearTimeout(linkHoverTimer);
+        linkDestroyTimer = setTimeout(() => {
+            if (!UI.contains(e.relatedTarget) && State.mode === 'LINK' && !window.getSelection().toString()) close();
+        }, 200);
     }
 
     init();

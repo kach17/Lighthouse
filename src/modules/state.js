@@ -1,291 +1,201 @@
 /**
- * Lighthouse - State Management (Centralized)
- * Determines the 'Mode' of the tooltip based on context.
+ * Lighthouse - State
+ * The settings, and the bar's state machine: which bar shows, with which actions, and why.
+ * Touches no DOM: content.js connects the effects.
  */
 (function(global) {
-    const Defaults = global.LighthouseConfig.defaults;
+    const Config = global.LighthouseConfig, Defaults = Config.defaults;
     const Actions = global.LighthouseActions;
 
     const State = {
-        settings: { ...Defaults },
-        
-        // The current state of the DOM/Selection
-        ctx: null,
-        
-        // 'HIDDEN', 'SELECTION', 'INPUT', 'SMART', 'LINK'
-        mode: 'HIDDEN', 
-        
-        // Logic for Input Toggling (Prevent annoyance)
-        lastFocusedInput: null,
-        
-        // The list of actions to show for the current mode
-        activeActions: [],
+        settings: { ...Defaults },   // until the stored ones load
+        ctx: null,                   // the context the bar is for
+        mode: 'HIDDEN',
+        lastFocusedInput: null,      // the field the caret bar was last shown for (the first-click rule)
+        activeActions: [],           // the bar's actions, in order
+        lastEvent: null,             // the last pointer or key event (a fallback position)
 
-        _orderedActionsCache: null,
-        _lastOrderStr: null,
-
-        _getOrderedActions: function() {
-            if (!this.settings || !this.settings.order) return [];
-            const currentOrderStr = this.settings.order.join(',');
-            if (this._lastOrderStr !== currentOrderStr) {
-                this._orderedActionsCache = this.settings.order
-                    .map(id => Actions.find(a => a.id === id))
-                    .filter(a => a);
-                this._lastOrderStr = currentOrderStr;
-            }
-            return this._orderedActionsCache;
-        },
-
+        // Settings: loaded once and kept current, only ever valid ones (config.js declares them), so a reader
+        // never needs a fallback. New actions are added to stored settings by the background
         init: function() {
-            if (typeof chrome !== 'undefined' && chrome.storage) {
-                chrome.storage.sync.get(Defaults, (items) => {
-                    // Self-healing: Ensure new actions are migrated
-                    const currentIds = new Set(items.order);
-                    let dirty = false;
-                    
-                    Actions.forEach(a => {
-                        if (!currentIds.has(a.id)) {
-                            items.order.push(a.id);
-                            if (items.enabled[a.id] === undefined) items.enabled[a.id] = true;
-                            dirty = true;
-                        }
-                    });
-
-                    if (dirty) chrome.storage.sync.set(items);
-                    this.settings = items;
-                    if (global.LighthouseInput) global.LighthouseInput.refresh(); // e.g. site switched off
-                });
-
-                if (chrome.storage.onChanged) {
-                    chrome.storage.onChanged.addListener((changes) => {
-                        for (let key in changes) {
-                            this.settings[key] = changes[key].newValue;
-                        }
-                        if (global.LighthouseInput) global.LighthouseInput.refresh();
-                    });
-                }
-            }
+            chrome.storage.sync.get(Defaults, (items) => { this.settings = { ...Defaults, ...Config.validOnly(items) }; global.LighthouseInput.refresh(); });
+            chrome.storage.onChanged.addListener((changes, area) => {
+                if (area !== 'sync') return;
+                for (const key in changes) if (key in Defaults) this.settings[key] = Config.validOnly({ [key]: changes[key].newValue })[key] ?? Defaults[key];
+                global.LighthouseInput.refresh();   // e.g. site switched off
+            });
         },
 
-        /**
-         * The Core Logic: Ingests a raw context and decides the Mode.
-         * Enforces the "First Click" rule for inputs.
-         */
-        update: function(rawCtx) {
-            this.ctx = rawCtx;
-            const Logger = global.LighthouseUtils.Logger;
-            
-            // 1. Reset Logic: If clicking outside or on a non-input, reset input tracker
-            // This ensures if I click Input A, then Text B, then Input A again -> it shows the tooltip again.
-            if (!rawCtx.isInput) {
-                this.lastFocusedInput = null;
-            }
-
-            // 2. Link Mode (Hover logic handles this separately usually, but good to have)
-            const apiCtx = global.LighthouseAPI.prepareContext(rawCtx);
-            if (rawCtx.isLink) {
-                this.mode = 'LINK';
-                this.activeActions = this._filterActions('link', apiCtx);
-                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'LINK');
-                return;
-            }
-
-            // 3. Empty Context (No text, no input) -> HIDDEN
-            if (!rawCtx.hasText && !rawCtx.isInput) {
-                if (this.mode !== 'HIDDEN') global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (Empty)');
-                this.mode = 'HIDDEN';
-                this.activeActions = [];
-                return;
-            }
-
-            // 4. Input Logic (The Complex Part)
-            if (rawCtx.isInput) {
-                // Case A: Text is selected INSIDE the input. 
-                // Always show tooltip (Copy/Cut/etc).
-                if (rawCtx.hasText) {
-                    const inputActions = this._filterActions('input', apiCtx);
-                    const smartActions = this._filterActions('smart', apiCtx);
-                    // REMOVED: const selectionActions = this._filterActions('selection');
-                    // Selection actions (like Search, Translate) often don't work well with Input text 
-                    // or are redundant with Input actions.
-                    
-                    let combined = [...inputActions, ...smartActions];
-                    combined = [...new Set(combined)];
-                    
-                    combined.sort((a, b) => {
-                        if (this.ctx.semanticType) {
-                            const aMatch = a.semantic === this.ctx.semanticType;
-                            const bMatch = b.semantic === this.ctx.semanticType;
-                            if (aMatch && !bMatch) return -1;
-                            if (!aMatch && bMatch) return 1;
-                        }
-                        const idxA = this.settings.order.indexOf(a.id);
-                        const idxB = this.settings.order.indexOf(b.id);
-                        if (idxA === -1 && idxB === -1) return 0;
-                        if (idxA === -1) return 1;
-                        if (idxB === -1) return -1;
-                        return idxA - idxB;
-                    });
-                    
-                    this.activeActions = combined;
-                    this.mode = 'INPUT';
-                    // We DO NOT reset lastFocusedInput here. 
-                    // If user selects text, then clicks again to collapse, we want Case B (Second Click) to fire and hide it.
-                    this.lastFocusedInput = rawCtx.element; 
-                    global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'INPUT (Text Selected)');
-                    return;
-                }
-
-                // Case B: Caret only (No text selected).
-                // Rule: Only show on FIRST click (Focus). Subsequent clicks (Edit/Move Cursor) hide it.
-                if (rawCtx.element === this.lastFocusedInput && !rawCtx.isEmptyInput) {
-                    this.mode = 'HIDDEN';
-                    this.activeActions = [];
-                    global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (Re-focus)');
-                    return;
-                } else {
-                    // User clicked a NEW input (or first time).
-                    // SHOW IT (Paste/Clear).
-                    this.activeActions = this._filterActions('input', apiCtx);
-                    if (this.activeActions.length > 0) {
-                        this.mode = 'INPUT';
-                        this.lastFocusedInput = rawCtx.element; // Mark as seen
-                        global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'INPUT (First Focus)');
-                    } else {
-                        this.mode = 'HIDDEN';
-                        global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (No Actions)');
-                    }
-                    return;
-                }
-            }
-
-            // 5. Smart Mode (Text Selected in DOM)
-            // Check for Smart Actions (Math, Currency, QR)
-            const smartActions = this._filterActions('smart', apiCtx);
-            if (smartActions.length > 0) {
-                this.mode = 'SMART';
-                // Merge Smart Actions with Standard Selection Actions
-                const selectionActions = this._filterActions('selection', apiCtx);
-                
-                // Combine
-                let combined = [...smartActions, ...selectionActions];
-                
-                // Deduplicate
-                combined = [...new Set(combined)];
-
-                // Sort by User Preference (Global Order)
-                // This ensures Smart Actions don't arbitrarily jump to the top if the user wants them elsewhere.
-                const matched = new Set(smartActions);
-                combined.sort((a, b) => {
-                    // Actions that matched the content come first (Convert, Color, Calculate…),
-                    // so the most relevant button is never hidden in More
-                    if (matched.has(a) !== matched.has(b)) return matched.has(a) ? -1 : 1;
-
-                    // 0. Semantic Boost (Top Priority)
-                    if (this.ctx.semanticType) {
-                        const aMatch = a.semantic === this.ctx.semanticType;
-                        const bMatch = b.semantic === this.ctx.semanticType;
-                        if (aMatch && !bMatch) return -1;
-                        if (!aMatch && bMatch) return 1;
-                    }
-
-                    const idxA = this.settings.order.indexOf(a.id);
-                    const idxB = this.settings.order.indexOf(b.id);
-                    // Handle missing items (push to end)
-                    if (idxA === -1 && idxB === -1) return 0;
-                    if (idxA === -1) return 1;
-                    if (idxB === -1) return -1;
-                    return idxA - idxB;
-                });
-
-                this.activeActions = combined;
-                
-                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'SMART');
-                return;
-            }
-
-            // 6. Standard Selection Mode (Text Selected in DOM)
-            this.activeActions = this._filterActions('selection', apiCtx);
-            if (this.activeActions.length > 0) {
-                this.mode = 'SELECTION';
-                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'SELECTION');
-            } else {
-                this.mode = 'HIDDEN';
-                global.LighthouseUtils.logEvent('STATE', 'CHANGE', 'HIDDEN (No Actions)');
-            }
-        },
-
-        /**
-         * Validates if the current Mode is still valid against the Browser State.
-         * Used by the Scroll/Resize loop to kill "Zombies".
-         */
-        /** The one way to read a setting, with a fallback until settings have loaded */
-        get: function(key, fallback) {
-            const s = this.settings;
-            return s && s[key] !== undefined ? s[key] : fallback;
-        },
+        /** The one way to read a setting */
+        get: function(key) { return this.settings[key]; },
         set: function(key, value) {
-            if (this.settings) this.settings[key] = value;
+            this.settings[key] = value;
             chrome.storage.sync.set({ [key]: value });
         },
 
         /** Whether the user has switched Lighthouse off for this site */
         isDisabledHere: function() {
-            const list = this.get('blacklist', []);
-            return Array.isArray(list) && list.includes(global.location.hostname);
-        },
-
-        validate: function() {
-            if (this.mode === 'HIDDEN') return true; // Already hidden, valid.
-
-            // 1. Validate Selection Mode
-            if (this.mode === 'SELECTION' || this.mode === 'SMART') {
-                const sel = window.getSelection();
-                // If selection is gone or empty, state is invalid.
-                if (!sel.rangeCount || sel.toString().trim().length === 0) {
-                    return false;
-                }
-                // (Optional) Check if selection is inside an input (should match INPUT mode, not SELECTION)
-                // but getSelection() usually returns empty string for inputs in some browsers, 
-                // or we rely on the fact that isForm handles that.
-            }
-
-            // 2. Validate Input Mode
-            if (this.mode === 'INPUT') {
-                const active = document.activeElement;
-                // If focus moved away from the element we are tracking
-                if (this.ctx && this.ctx.element && active !== this.ctx.element) {
-                    return false;
-                }
-                
-                // If user started typing (handled by 'input' event listener mostly, but good check)
-                // Note: We allow INPUT mode to persist if text IS selected. 
-                // If text is NOT selected, we rely on the toggle logic in update(), 
-                // but here we just check raw validity (element still exists/focused).
-            }
-
-            // 3. Validate Link Mode
-            if (this.mode === 'LINK') {
-                // If mouse moved away? handled by mouseout.
-                // This is harder to validate passively without event, assume valid until mouseout.
-            }
-
-            return true;
+            return this.get('blacklist').includes(global.location.hostname);
         },
 
         /**
-         * Helper to get enabled actions by category
+         * The bar's state machine: the one owner of what the bar is doing. Every change arrives as a named
+         * event through send(); nothing else writes mode, the field memory or the busy flags.
+         *
+         *   mode      HIDDEN | SELECTION | SMART | INPUT | LINK | SNIPPET_MENU | DRAGGING
+         *   acting    a keep-open action (Case) is running: the bar stays as it is
+         *   field     the field the caret bar was last shown for (the first-click rule)
+         *
+         *   event          from                        to
+         *   selected       not DRAGGING, !acting       decide(ctx): HIDDEN, LINK, INPUT, SMART or SELECTION
+         *                  (inPlace: a keep-open action's refresh, also while acting: the bar stays where it is)
+         *   link           any, !acting                decide(ctx)
+         *   snippets       any                         SNIPPET_MENU
+         *   snippetsGone   SNIPPET_MENU                HIDDEN
+         *   close          any                         HIDDEN
+         *   moved          not DRAGGING                the same (bar and handles follow), or HIDDEN if no longer valid
+         *   edit           not SNIPPET_MENU, !acting   HIDDEN
+         *   typed          not SNIPPET_MENU            HIDDEN, and the field is forgotten after 3 s
+         *   selectionLost  not SNIPPET_MENU/DRAGGING, !acting
+         *                                              HIDDEN (in a field: only a bar for selected text)
+         *   fieldLeft      any                         same mode; the field is forgotten
+         *   dragStart      any                         DRAGGING (the bar goes; the handles stay)
+         *   dragEnd        DRAGGING                    the mode before the drag
+         *   actStart/End   any                         acting on / off
+         *   (a released handle sends dragEnd, then its selection arrives as `selected`)
          */
+        acting: false,
+        _beforeDrag: 'HIDDEN',
+        _idleTimer: null,
+        _effects: { show: () => {}, hide: () => {} },
+
+        /** effects: show(withHandles, inPlace) renders the bar (inPlace: where it is); place(withHandles) moves it to the selection; hide(barOnly) removes it */
+        connect: function(effects) { this._effects = effects; },
+
+        /** Whether a new selection may be read now (not during a keep-open action or a drag) */
+        get busy() { return this.acting || this.mode === 'DRAGGING'; },
+
+        send: function(event, data = {}) {
+            const was = this.mode, fx = this._effects;
+            const hide = () => { this.mode = 'HIDDEN'; this.activeActions = []; fx.hide(); };
+            switch (event) {
+                case 'selected':   // inPlace: the bar refreshed by its own keep-open action (allowed while acting)
+                    if (this.busy && !data.inPlace) return;
+                    this.decide(data.ctx);
+                    if (this.mode === 'HIDDEN') fx.hide(); else fx.show(data.ctx.hasText, data.inPlace);
+                    return;
+                case 'link':
+                    if (this.acting) return;
+                    this.decide(data.ctx);
+                    if (this.mode === 'LINK') fx.show(false);
+                    return;
+                case 'snippets':
+                    this.ctx = data.ctx;
+                    this.mode = 'SNIPPET_MENU';
+                    this.activeActions = data.actions;
+                    fx.show(false);
+                    return;
+                case 'snippetsGone':
+                    if (was === 'SNIPPET_MENU') hide();
+                    return;
+                case 'close':
+                    hide();
+                    return;
+                case 'moved':   // scrolled or resized: the bar and handles follow, or go if what they were for is gone
+                    if (was === 'DRAGGING') return;   // the drag positions the handles itself
+                    if (was !== 'HIDDEN' && this._stillValid()) fx.place(this.ctx.hasText); else hide();
+                    return;
+                case 'edit':
+                    if (was !== 'SNIPPET_MENU' && !this.acting) hide();
+                    return;
+                case 'typed':
+                    if (was === 'SNIPPET_MENU') return;
+                    hide();
+                    clearTimeout(this._idleTimer);
+                    this._idleTimer = setTimeout(() => { this.lastFocusedInput = null; }, 3000);
+                    return;
+                case 'selectionLost':
+                    if (this.acting || was === 'SNIPPET_MENU' || was === 'DRAGGING') return;
+                    if (data.inField && !(was !== 'HIDDEN' && this.ctx && this.ctx.hasText)) return;   // the caret bar stays
+                    hide();
+                    return;
+                case 'fieldLeft': {
+                    const field = this.lastFocusedInput;
+                    if (field && !(data.to && field.contains(data.to))) this.lastFocusedInput = null;
+                    return;
+                }
+                case 'dragStart':
+                    if (was !== 'DRAGGING') this._beforeDrag = was;
+                    this.mode = 'DRAGGING';
+                    fx.hide(true);
+                    return;
+                case 'dragEnd':
+                    if (was === 'DRAGGING') this.mode = this._beforeDrag;
+                    return;
+                case 'actStart': this.acting = true; return;
+                case 'actEnd': this.acting = false; return;
+            }
+        },
+
+        /**
+         * Which bar a context gets: the mode and its actions. Enforces the "First Click" rule for inputs.
+         */
+        decide: function(rawCtx) {
+            this.ctx = rawCtx;
+            const apiCtx = global.LighthouseAPI.prepareContext(rawCtx);
+            const set = (mode, actions) => { this.mode = mode; this.activeActions = actions; };
+
+            // Leaving fields: coming back to one is a first click again
+            if (!rawCtx.isInput) this.lastFocusedInput = null;
+
+            if (rawCtx.isLink) return set('LINK', this._filterActions('link', apiCtx));
+            if (!rawCtx.hasText && !rawCtx.isInput) return set('HIDDEN', []);
+
+            if (rawCtx.isInput) {
+                // Text selected in the field: always shown. Its field is remembered, so a click that
+                // collapses the selection counts as a later click and hides the bar
+                if (rawCtx.hasText) {
+                    this.lastFocusedInput = rawCtx.element;
+                    const smart = this._filterActions('smart', apiCtx);   // content-matched first, as on the page
+                    return set('INPUT', this.orderActions([...this._filterActions('input', apiCtx), ...smart], smart));
+                }
+                // Caret only: shown on the first click into a field, not on later clicks while editing
+                if (rawCtx.element === this.lastFocusedInput && !rawCtx.isEmptyInput) return set('HIDDEN', []);
+                const actions = this._filterActions('input', apiCtx);
+                if (!actions.length) return set('HIDDEN', []);
+                this.lastFocusedInput = rawCtx.element;
+                return set('INPUT', actions);
+            }
+
+            // Text on the page: content-matched actions first (Convert, Color, Calculate...), so the
+            // relevant button is never hidden in More
+            const smart = this._filterActions('smart', apiCtx);
+            const selection = this._filterActions('selection', apiCtx);
+            if (smart.length) return set('SMART', this.orderActions([...smart, ...selection], smart));
+            if (selection.length) return set('SELECTION', selection);
+            set('HIDDEN', []);
+        },
+
+        /** The order a bar's actions appear in: content-matched ones first, then the user's order */
+        orderActions: function(candidates, matched = []) {
+            const order = this.get('order'), first = new Set(matched);
+            const rank = (a) => { const i = order.indexOf(a.id); return i === -1 ? Infinity : i; };
+            return [...new Set(candidates)].sort((a, b) => (first.has(b) - first.has(a)) || (rank(a) - rank(b)) || 0);
+        },
+
+        // Whether what the bar is for is still there: page text still selected, a field still focused
+        _stillValid: function() {
+            if (this.mode === 'SELECTION' || this.mode === 'SMART') return !!window.getSelection().toString().trim();
+            if (this.mode === 'INPUT') return !(this.ctx && this.ctx.element && global.LighthouseInput.focusedElement() !== this.ctx.element);
+            return true;
+        },
+
+        // Enabled actions of a category whose condition matches, in the user's order
         _filterActions: function(category, apiCtx) {
-            apiCtx = apiCtx || global.LighthouseAPI.prepareContext(this.ctx);
-            return this._getOrderedActions().filter(a => {
-                if (this.settings.enabled[a.id] === false) return false;
-                if (a.category !== category) return false;
-                return a.condition(apiCtx);
-            });
+            const enabled = this.get('enabled');
+            return this.get('order').map(id => Actions.find(a => a.id === id)).filter(a => a && a.category === category && enabled[a.id] !== false && a.condition(apiCtx));
         }
     };
 
     global.LighthouseState = State;
-
 })(typeof self !== 'undefined' ? self : window);

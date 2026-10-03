@@ -65,7 +65,6 @@
     async function asyncQuery(action, payload, valueKey = 'result', fallback = null) {
         const res = await $.ask(action, payload);
         if (res && res.success) return valueKey ? res[valueKey] : res;
-        $.logEvent('API', 'ERROR', res ? res.error : 'No response');
         return fallback;
     }
 
@@ -79,90 +78,48 @@
 
     function getTools(ctx) {
         let dateOrder = null;
+        const toast = (msg, type = 'success') => window.LighthouseUI.showToast(msg, type);
         return {
-            // UI
-            toast: (msg, type = 'success') => {
-                if (window.LighthouseUI && window.LighthouseUI.showToast) {
-                    window.LighthouseUI.showToast(msg, type);
-                }
-            },
+            toast,
             // For actions that convert values (currency, units): convert every value on the page
-            convertPageItem: () => ({
-                label: 'Convert page',
-                icon: 'refresh',
-                onClick: () => window.LighthouseContent && window.LighthouseContent.convertAllOnPage()
+            convertPageItem: () => ({ label: 'Convert page', icon: 'refresh', onClick: () => window.LighthouseContent.convertAllOnPage() }),
+            // A value (a string, shown as one) or { node } with Copy, and any further items
+            buildCopyMenu: (copyText, shown = copyText, label = 'Copy', extraItems = []) => ({
+                ...(typeof shown === 'string' ? { previewText: shown, isValue: true } : { node: shown.node }),
+                items: [{ label, icon: 'copy', onClick: () => { copy(copyText); toast('Copied'); } }, ...extraItems]
             }),
-
             // A text (translation, definition) with Copy, and any further items
             textPreview(text, extraItems = []) { return this.buildCopyMenu(text, { node: $.create('div', { className: 'lh-text', text }) }, 'Copy', extraItems); },
-            buildCopyMenu: (copyText, previewText = copyText, label = 'Copy', extraItems = []) => {
-                const items = [{
-                    label: label,
-                    icon: 'copy',
-                    onClick: () => {
-                        copy(copyText);
-                        if (window.LighthouseUI && window.LighthouseUI.showToast) window.LighthouseUI.showToast('Copied', 'success');
-                    }
-                }];
-                
-                items.push(...extraItems);
 
-                return {
-                    type: 'menu',
-                    previewText: typeof previewText === 'string' ? previewText : undefined,
-                    isValue: typeof previewText === 'string',
-                    node: typeof previewText !== 'string' ? previewText.node : undefined,
-                    items
-                };
-            },
-            
-            // Text: the surface where the user is (read and rewrite), and typing-style replacement
+            // Text: the surface where the user is (read and rewrite), and typing-style replacement (the field
+            // gets focus first: a click on the bar may have taken it)
             surface: SelLib.surface(ctx.element || undefined),
             replace: (newText, options = {}) => {
-                if (ctx.isInput && ctx.element) {
-                    SelLib.insertText(ctx, String(newText), options);
-                }
+                if (!ctx.isInput || !ctx.element) return;
+                ctx.element.focus();
+                SelLib.insertText(ctx, String(newText), options);
             },
-            
-            // Clipboard
+
             copy,
             copySelection: () => document.execCommand('copy'),   // keeps formatting
             open: (url) => window.open(url, '_blank'),
             // Collect and Paste (session storage)
             collection: {
                 get: async () => { try { return (await chrome.storage.session.get('copyStack')).copyStack || []; } catch (e) { return []; } },
-                set: (items) => chrome.storage.session.set({ copyStack: items }).catch(() => {})
+                set: (items) => chrome.storage.session.set({ copyStack: items }).catch(() => {}),
+                // The one menu item that empties it (Collect, Paste)
+                clearItem() { return { label: 'Clear collection', icon: 'clear', onClick: async () => { await this.set([]); toast('Collection cleared'); } }; }
             },
             // Read by the extension (background + hidden page), never by the page: no site prompts
-            readClipboard: async () => {
-                const res = await $.message('READ_CLIPBOARD');
-                return res && res.success ? res.text : '';
-            },
-            
-            // Interaction
-            expandSelection: () => {
-                SelLib.handleExpand();
-                // Force update handles
-                if (window.LighthouseHandles) {
-                    window.LighthouseHandles.hideDragHandles(false);
-                    setTimeout(() => {
-                        window.LighthouseHandles.setDragHandles();
-                    }, 10);
-                }
-            },
-            
-            // Network (using Centralized Bridge)
-            fetchRate: (base, target) => MathLib.fetchRate(base, target),   // the rate alone
-            rate: (base, target) => MathLib.rate(base, target),             // { rate, asOf }, same request
-            // A background service's result, or null: TRANSLATE, DEFINE, SPELLCHECK, WIKI_SUMMARY, LINK_PREVIEW
-            // (each action builds its own request). One shared answer per question.
+            readClipboard: async () => { const res = await $.message('READ_CLIPBOARD'); return res && res.success ? res.text : ''; },
+            expandSelection: () => SelLib.handleExpand(),   // a keep-open action: the refresh moves the bar and handles
+
+            // A currency rate { rate, asOf }, or null. A background service's result, or null: TRANSLATE, DEFINE,
+            // SPELLCHECK, WIKI_SUMMARY, LINK_PREVIEW (each action builds its own request). One answer per question.
+            rate: (base, target) => MathLib.rate(base, target),
             query: (service, payload) => asyncQuery(service, payload, 'result', null),
-
             // Dates: how numeric dates are written here (worked out once, on first use)
-            dateOrder: () => dateOrder || (dateOrder = guessDateOrder()),
-
-            // Math
-            math: MathLib 
+            dateOrder: () => dateOrder || (dateOrder = guessDateOrder())
         };
     }
 

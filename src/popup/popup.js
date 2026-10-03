@@ -8,19 +8,19 @@
     let currentState = { ...Config.defaults };
     let currentHostname = '';
 
-    const GRIP_ICON  = `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>`;
-    const TRASH_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l.9 12.2A2 2 0 0 0 9.4 21h5.2a2 2 0 0 0 2-1.8L17.5 7"/></svg>`;
+    const registryIcon = (name) => $.getIconFromSvg(window.LighthouseIcons[name]);
 
     document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.sync.get(Config.defaults, (items) => {
-            currentState = items;
+            currentState = { ...Config.defaults, ...Config.validOnly(items) };   // only valid settings (config.js)
 
-            bindCheckbox('toggle-snapping', items.smartSnapping, v => updateSetting('smartSnapping', v));
-            bindCheckbox('toggle-handles', items.addDragHandles !== false, v => updateSetting('addDragHandles', v));
-            bindCheckbox('toggle-labels', items.showLabels !== false, v => updateSetting('showLabels', v));
-            bindCheckbox('toggle-tidy', items.tidySpacing !== false, v => updateSetting('tidySpacing', v));
-            setupLinkPreviews(items.linkPreviews === true);
-            bindChoice('brackets-mode', 'mode', items.brackets || 'wrap', v => updateSetting('brackets', v));
+            // A control marked data-setting shows that setting and changes it: a switch, or a choice among a few
+            document.querySelectorAll('input[data-setting]').forEach(input => {
+                input.checked = currentState[input.dataset.setting];
+                input.addEventListener('change', () => updateSetting(input.dataset.setting, input.checked));
+            });
+            document.querySelectorAll('[role=radiogroup][data-setting]').forEach(group => bindChoice(group, currentState[group.dataset.setting], v => updateSetting(group.dataset.setting, v)));
+            setupLinkPreviews(currentState.linkPreviews);
 
             setupToggleRows();
             setupTheme();
@@ -48,20 +48,10 @@
         chrome.storage.sync.set({ [key]: value });
     }
 
-    // Single settings are rows wrapping a checkbox: the row is the control,
-    // and its state is stated in words by CSS ("On" / "Off").
-    function bindCheckbox(id, checked, onChange) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.checked = !!checked;
-        el.addEventListener('change', () => onChange(el.checked));
-    }
-
     // Link previews are opt-in: turning them on asks Chrome for permission to fetch the
     // hovered page; turning them off gives that permission back.
     function setupLinkPreviews(enabled) {
         const input = document.getElementById('toggle-link-previews');
-        if (!input) return;
         const ORIGINS = { origins: ['https://*/*', 'http://*/*'] };
         input.checked = enabled;
         input.addEventListener('change', () => {
@@ -76,21 +66,19 @@
         });
     }
 
-    // A choice among a few options: a segmented control, the chosen one takes the tone.
-    function bindChoice(id, attr, value, onChange) {
-        const group = document.getElementById(id);
-        if (!group) return;
-        const sync = (v) => group.querySelectorAll(`[data-${attr}]`).forEach(b => {
-            const on = b.dataset[attr] === v;
+    // A choice among a few options: a segmented control (its buttons carry data-mode), the chosen one takes the tone.
+    function bindChoice(group, value, onChange) {
+        const sync = (v) => group.querySelectorAll('[data-mode]').forEach(b => {
+            const on = b.dataset.mode === v;
             b.classList.toggle('is-engaged', on);
             b.setAttribute('aria-checked', String(on));
         });
         sync(value);
         group.addEventListener('click', (e) => {
-            const btn = e.target.closest(`[data-${attr}]`);
+            const btn = e.target.closest('[data-mode]');
             if (!btn) return;
-            sync(btn.dataset[attr]);
-            onChange(btn.dataset[attr]);
+            sync(btn.dataset.mode);
+            onChange(btn.dataset.mode);
         });
     }
 
@@ -136,7 +124,7 @@
                 btn.setAttribute('aria-pressed', String(mode === m));
             });
         };
-        syncChoice(currentState.customStyles ? currentState.themeMode : (currentState.themeMode || 'light'));
+        syncChoice(currentState.themeMode);
 
         const apply = (cssText, mode) => {
             sharedStyle.textContent = cssText;
@@ -174,12 +162,13 @@
             .map(code => ({ code, name: nameOf('language', code) }))
             .sort((a, b) => a.name.localeCompare(b.name, ui))
             .forEach(({ code, name }) => langSelect.appendChild($.create('option', { attrs: { value: code }, text: name })));
-        [...new Set(Object.values(Data.CURRENCY_MAP))].sort().forEach(code => {
+        // Every currency the browser knows, and the crypto ones data.js adds
+        [...new Set([...Intl.supportedValuesOf('currency'), ...Object.values(Data.CURRENCY_MAP)])].sort().forEach(code => {
             const name = nameOf('currency', code);
             currSelect.appendChild($.create('option', { attrs: { value: code }, text: name === code ? code : `${code} — ${name}` }));
         });
 
-        const std = currentState.standards || Config.defaults.standards;
+        const std = currentState.standards;
         langSelect.value = std.language;
         currSelect.value = std.currency;
         unitSelect.value = std.units;
@@ -198,10 +187,6 @@
         const toggle = document.getElementById('toggle-site');
         const label  = document.getElementById('current-site');
 
-        const getBlacklist = () => {
-            if (!Array.isArray(currentState.blacklist)) currentState.blacklist = [];
-            return currentState.blacklist;
-        };
         const unavailable = () => {
             label.textContent = 'Not available here';
             toggle.checked  = false;
@@ -216,7 +201,7 @@
                 if (!(url.protocol.startsWith('http') || url.protocol === 'file:')) return unavailable();
                 currentHostname = url.hostname || 'Local file';
                 label.textContent = currentHostname.replace(/^www\./, '');
-                toggle.checked  = !getBlacklist().includes(currentHostname);
+                toggle.checked  = !currentState.blacklist.includes(currentHostname);
                 toggle.disabled = false;
             } catch (e) {
                 unavailable();
@@ -225,7 +210,7 @@
 
         toggle.addEventListener('change', () => {
             if (!currentHostname) return;
-            const list = getBlacklist();
+            const list = currentState.blacklist;
             const idx  = list.indexOf(currentHostname);
             if (toggle.checked) { if (idx > -1) list.splice(idx, 1); }
             else if (idx === -1) list.push(currentHostname);
@@ -264,7 +249,7 @@
             className: 'lh-row list-item' + (isOn ? '' : ' is-off'),
             attrs: { tabindex: '0', role: 'checkbox', 'aria-checked': String(isOn), 'data-type': type, draggable: 'true' },
             children: [
-                $.create('span', { className: 'lh-row-grip', html: GRIP_ICON }),
+                $.create('span', { className: 'lh-row-grip', children: [registryIcon('grip')] }),
                 $.create('span', { className: 'lh-row-icon', children: [ $.createSmartIcon(icon, url, label) ] }),
                 $.create('span', { className: 'lh-row-label', text: label }),
                 state
@@ -281,7 +266,7 @@
             li.appendChild($.create('button', {
                 className: 'lh-row-delete',
                 attrs: { 'aria-label': `Delete ${label}`, title: 'Delete' },
-                html: TRASH_ICON,
+                children: [registryIcon('trash')],
                 events: { click: (e) => { e.stopPropagation(); onDelete(); } }
             }));
         }
@@ -416,7 +401,7 @@
         const list     = document.getElementById('shortcuts-list');
         const empty    = document.getElementById('shortcuts-empty');
         const hint     = document.getElementById('shortcuts-hint');
-        const snippets = currentState.shortcuts || [];
+        const snippets = currentState.shortcuts;
         list.innerHTML = '';
         empty.hidden = snippets.length > 0;
         hint.hidden  = snippets.length === 0;
@@ -430,7 +415,7 @@
                     $.create('button', {
                         className: 'lh-row-delete',
                         attrs: { 'aria-label': `Delete //${s.trigger}`, title: 'Delete' },
-                        html: TRASH_ICON,
+                        children: [registryIcon('trash')],
                         events: { click: () => { snippets.splice(index, 1); updateSetting('shortcuts', snippets); renderSnippets(); } }
                     })
                 ]
@@ -459,7 +444,6 @@
             const expansion = expansionInput.value; // preserve intentional whitespace
             if (!trigger || !expansion) return;
             if (/\s/.test(trigger)) { say('A name can’t contain spaces.'); triggerInput.focus(); return; }
-            if (!currentState.shortcuts) currentState.shortcuts = [];
             if (currentState.shortcuts.find(s => s.trigger === trigger)) { say(`//${trigger} already exists.`); triggerInput.focus(); return; }
             currentState.shortcuts.push({ trigger, expansion });
             updateSetting('shortcuts', currentState.shortcuts);
@@ -496,9 +480,10 @@
             const reader = new FileReader();
             reader.onload = (event) => {
                 try {
-                    const imported = JSON.parse(event.target.result);
-                    if (typeof imported !== 'object' || !imported) throw new Error('Invalid format');
-                    chrome.storage.sync.set(imported, () => window.location.reload());
+                    // Only settings Lighthouse knows, with values of their kind; a file with none isn't an export
+                    const valid = Config.validOnly(JSON.parse(event.target.result));
+                    if (!Object.keys(valid).length) throw new Error('Not a settings export');
+                    chrome.storage.sync.set(valid, () => window.location.reload());
                 } catch (err) {
                     alert('That file isn’t a Lighthouse settings export.');
                 }

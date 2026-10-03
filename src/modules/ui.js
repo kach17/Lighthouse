@@ -14,9 +14,6 @@
     let shadowRoot = null;
     let tooltipContainer = null;
     
-    // Volatile State
-    let actionActive = false;
-    let lastState = null;
     const destroyCallbacks = [];
     
     // Cache for preview popovers to prevent duplicate network requests
@@ -191,12 +188,6 @@
         else strip.warm = setTimeout(() => describe(btn).then(say), $.token('--so-label-delay', 350));
     }
 
-    // A button that stays open changed what it would do next (Case): described again
-    function redescribe(btn) {
-        delete btn._described;
-        if (strip && strip.on === btn && strip.tool) describe(btn).then(parts => strip && strip.on === btn && parts.length && show(parts, { keep: 'last' }));
-    }
-
     // Feedback from an action that keeps the bar open (Read aloud: 'Stopped reading'), for a moment.
     // False without a strip (then: a toast).
     function stripNotice(text) {
@@ -218,196 +209,138 @@
     }
 
     // --- INITIALIZATION ---
+    // The bar lives in a closed shadow root: the page can't read what it shows (clipboard, collected snippets)
     function init() {
-        if (document.getElementById(HOST_ID)) return; 
-
-        const host = document.createElement('div');
-        host.id = HOST_ID;
-        host.style.cssText = 'display: none; position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;';
+        if (document.getElementById(HOST_ID)) return;
+        const host = $.create('div', { attrs: { id: HOST_ID }, style: 'display: none; position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;' });
         document.documentElement.appendChild(host);
-        shadowRoot = host.attachShadow({ mode: 'closed' });   // closed: the page can't read what the bar shows (clipboard, collected snippets)
-
-        ['src/content/tokens.css', 'src/content/styles.css'].forEach(path => {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = chrome.runtime.getURL(path);
-            shadowRoot.appendChild(link);
-        });
-
-        const userStyle = document.createElement('style');
-        userStyle.id = 'lighthouse-user-styles';
-        shadowRoot.appendChild(userStyle);
-
-        tooltipContainer = $.create('div', { 
-            attrs: { id: TOOLTIP_ID, role: 'tooltip' }
-        });
+        shadowRoot = host.attachShadow({ mode: 'closed' });
+        for (const path of ['src/content/tokens.css', 'src/content/styles.css']) shadowRoot.appendChild($.create('link', { attrs: { rel: 'stylesheet', href: chrome.runtime.getURL(path) } }));
+        shadowRoot.appendChild($.create('style', { attrs: { id: 'lighthouse-user-styles' } }));   // the theme
+        tooltipContainer = $.create('div', { attrs: { id: TOOLTIP_ID, role: 'tooltip' } });
         shadowRoot.appendChild(tooltipContainer);
+        // A press on the bar ends there too: its release (often over the page, once the bar has closed) is
+        // part of the click, never a new click on the page. Forgotten just after the release.
+        tooltipContainer.addEventListener('mousedown', (e) => { pressed = true; pressedAt = [e.clientX, e.clientY]; }, true);
+        window.addEventListener('mouseup', () => setTimeout(() => { pressed = false; }), true);
         watchStrip();
     }
 
-    // --- MAIN RENDER LOOP ---
-    function render(State) {
+    // --- RENDER ---
+    // The bar for the state machine's current state: header, up to four buttons (the rest in More), the strip
+    const MAX_BUTTONS = 4;
+    // The context the bar's buttons act on, read when they act: a refresh showing the same buttons only swaps
+    // it, and the bar stays exactly as it is (Case)
+    let current = null, shown = '', shownButtons = [];
+    const live = new Proxy({}, { get: (_, k) => current[k], set: (_, k, v) => { current[k] = v; return true; }, has: (_, k) => k in current });
+    const liveTools = new Proxy({}, { get: (_, k) => current.tools[k] });
+    function render(State, { inPlace = false } = {}) {
         if (!shadowRoot) init();
-        
-        const host = document.getElementById(HOST_ID);
-        if (host) host.style.display = 'block';
-
-        lastState = State;
+        document.getElementById(HOST_ID).style.display = 'block';
         const { settings, ctx, activeActions } = State;
-        if (window.LighthouseInput) window.LighthouseInput.activate('bar'); // its keys listen only while it is open
-        
-        $.logEvent('UI', 'RENDER', `${State.mode} (${activeActions.length} actions)`);
+        window.LighthouseInput.activate('bar');   // its keys listen only while it is open
 
-        // Labels visible or icon-only (a data attribute: positioning rewrites the class list)
-        tooltipContainer.dataset.labels = settings.showLabels === false ? 'off' : 'on';
+        // Labels visible or icon-only (a data attribute: positioning rewrites the class list), and the theme
+        tooltipContainer.dataset.labels = State.get('showLabels') ? 'on' : 'off';
+        const theme = shadowRoot.getElementById('lighthouse-user-styles');
+        const css = window.LighthouseData.resolveThemeCSS(settings).replace(/:root|:host/g, `:host(#${HOST_ID})`);
+        if (theme.textContent !== css) theme.textContent = css;
 
-        // 1. Apply Theme
-        const styleTag = shadowRoot.getElementById('lighthouse-user-styles');
-        const themeCSS = window.LighthouseData.resolveThemeCSS(settings).replace(/:root|:host/g, `:host(#${HOST_ID})`);
-        if (styleTag && styleTag.textContent !== themeCSS) styleTag.textContent = themeCSS;
+        const apiCtx = API.prepareContext(ctx), ids = activeActions.map(a => a.id).join();
+        if (inPlace && ids === shown) {   // the same buttons: their labels worked out again, nothing rebuilt
+            current = apiCtx;
+            shownButtons.forEach(b => b._relabel && b._relabel());
+            if (strip) { strip.facts = selectionFacts(apiCtx); if (!strip.tool) show(strip.facts); }   // the selection's own facts
+            updatePosition(ctx, true);
+            return afterRefresh();
+        }
+        current = apiCtx;
+        shown = ids;
 
         // Already showing: updatePosition decides whether it stays or hands over
         pendingSnapshot = snapshot();
-        tooltipContainer.innerHTML = ''; 
+        tooltipContainer.innerHTML = '';
 
-        // 2. Render Header
-        if (State.mode === 'LINK') {
-            renderLinkHeader(ctx);
-        } else if (ctx.hasText) {
+        // The header: a hovered link, or the quoted selection (and the link in it, if it is one)
+        if (State.mode === 'LINK') renderLinkHeader(ctx);
+        else if (ctx.hasText) {
             renderTextHeader(ctx);
             const link = $.findLink(ctx.text);
             if (link) { ctx.url = link; renderLinkHeader(ctx); }
         }
 
-        // 3. Render Actions
-        const apiCtx = API.prepareContext(ctx);
-        const tools = apiCtx.tools;
-
-        const MAX_BUTTONS = 4;
-        const overflow = [];
-
-        activeActions.forEach((actionDef, i) => {
-            const btn = createButton(actionDef, apiCtx, tools);
-            if (i < MAX_BUTTONS) tooltipContainer.appendChild(btn);
-            else overflow.push(btn);
-        });
-
-        if (overflow.length) {
-            const moreBtn = $.create('div', {
-                className: 'lighthouse-btn',
-                attrs: { role: 'button', tabindex: '0' },
-                children: [ $.createSmartIcon('more'), $.create('span', { className: 'lighthouse-label', text: 'More' }) ]
-            });
-            attachPopover(moreBtn, (el) => {
-                el.append(...overflow);
-                return el;
-            }, 0);
-            tooltipContainer.appendChild(moreBtn);
+        const buttons = shownButtons = activeActions.map(def => createButton(def, live, liveTools));
+        tooltipContainer.append(...buttons.slice(0, MAX_BUTTONS));
+        if (buttons.length > MAX_BUTTONS) {
+            const more = $.create('div', { className: 'lighthouse-btn', attrs: { role: 'button', tabindex: '0' },
+                children: [$.createSmartIcon('more'), $.create('span', { className: 'lighthouse-label', text: 'More' })] });
+            attachPopover(more, (el) => { el.append(...buttons.slice(MAX_BUTTONS)); return el; });
+            tooltipContainer.appendChild(more);
         }
 
-        // 4. Strip (a row of the bar, so positioning and popovers already account for it)
-        buildStrip(apiCtx, settings.showLabels === false, activeActions[0] && activeActions[0].label);
-
-        // 5. Show
-        updatePosition(ctx);
+        // The strip: a row of the bar, so positioning and popovers already account for it
+        buildStrip(apiCtx, !State.get('showLabels'), activeActions[0] && activeActions[0].label);
+        updatePosition(ctx, inPlace);
         void tooltipContainer.offsetWidth;
         tooltipContainer.classList.add('visible');
+        if (inPlace) afterRefresh();
     }
 
-    // --- UNIFIED COMPONENTS ---
+    // After a refresh: the strip describes the button under the pointer afresh (it may do something else next:
+    // Case), and gives the action's feedback
+    function afterRefresh() {
+        if (!notice) return;
+        const { text, at, success } = notice, under = shadowRoot.elementFromPoint(...at), btn = under && under.closest && under.closest('.lighthouse-btn, .lighthouse-preview');
+        notice = null;
+        if (btn) { delete btn._described; if (strip && strip.on === btn) strip.on = null; }
+        stripPoint(btn);
+        if (text && !stripNotice(text)) showToast(text, success ? 'success' : 'error');
+    }
 
+    // --- COMPONENTS ---
+
+    // The selection, quoted; a click scrolls to it
     function renderTextHeader(ctx) {
-        let pTxt = ctx.text.trim();
-        pTxt = $.excerpt(pTxt, 100);
-        
-        const previewEl = $.create('div', { 
-            className: 'lighthouse-preview',
-            style: 'cursor: pointer;',
-            children: [ $.create('span', { className: 'lighthouse-scroll-text', text: `"${pTxt}"` }) ],
-            events: {
-                mousedown: (e) => {
-                    e.preventDefault(); e.stopPropagation();
-                    if (ctx.isForm && ctx.element) {
-                        ctx.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    } else {
-                        const sel = window.getSelection();
-                        if (sel.rangeCount > 0) {
-                            sel.getRangeAt(0).startContainer.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }
-                    }
-                }
-            }
+        const el = $.create('div', {
+            className: 'lighthouse-preview', style: 'cursor: pointer;',
+            children: [$.create('span', { className: 'lighthouse-scroll-text', text: `"${$.excerpt(ctx.text.trim(), 100)}"` })],
+            events: { mousedown: stop(() => {
+                const sel = window.getSelection();
+                const target = ctx.isForm ? ctx.element : sel.rangeCount && sel.getRangeAt(0).startContainer.parentElement;
+                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }) }
         });
-        previewEl._info = () => 'Scroll to selection';   // said in the strip
-
-        tooltipContainer.appendChild(previewEl);
+        el._info = () => 'Scroll to selection';   // said in the strip
+        tooltipContainer.appendChild(el);
     }
 
+    // A link (hovered, or the selection is one): where it goes, and with previews on, a card for the page
     function renderLinkHeader(ctx) {
-        const apiCtx = API.prepareContext(ctx);
-        const tools = apiCtx.tools;
-
-        // The linked page's <head>, fetched once for both the preview and the icon. The setting is
-        // checked first, so turning previews off also hides ones fetched earlier.
+        const tools = API.prepareContext(ctx).tools;
+        // The page's <head>, fetched once for the preview and the icon. The setting is checked first, so
+        // turning previews off also hides ones fetched earlier
         const pageHead = async () => {
-            if (!window.LighthouseState.get('linkPreviews', false)) return null;
-            const cacheKey = `og:${ctx.url}`;
-            let html = previewCache.get(cacheKey);
-            if (!html) {
-                html = await tools.query('LINK_PREVIEW', { url: ctx.url });
-                if (html) cacheSet(cacheKey, html);
-            }
-            return html;
+            if (!window.LighthouseState.get('linkPreviews')) return null;
+            const key = `og:${ctx.url}`;
+            if (!previewCache.has(key)) { const html = await tools.query('LINK_PREVIEW', { url: ctx.url }); if (!html) return null; cacheSet(key, html); }
+            return previewCache.get(key);
         };
-
-        // The button shows where the link goes; the full address is in its title
-        const linkBtn = createButton({
-            id: 'link-open',
-            label: $.displayLink(ctx.url),
+        const page = () => pageHead().then(html => html && $.parsePreview(html, ctx.url)).catch(() => null);
+        tooltipContainer.appendChild(createButton({
+            id: 'link-open', label: $.displayLink(ctx.url), iconUrl: ctx.url,
             info: () => ctx.url,   // the full address (the label is shortened)
-            icon: null,
-            iconUrl: ctx.url,
-            // With previews on, the page's own icon (from the same fetched <head> the preview uses)
-            findIcon: async () => { const html = await pageHead(); return html ? $.parsePreview(html, ctx.url).icon : null; },
+            findIcon: async () => { const p = await page(); return p ? p.icon : null; },   // the page's own icon
+            url: () => ctx.url,
             preview: async () => {
-                let card = null;
-                try {
-                    const html = await pageHead();
-                    if (html) {
-                        const page = $.parsePreview(html, ctx.url);
-                        if (page.title || page.image) {
-                            card = $.mediaCard({ image: page.image, title: page.title, body: page.description });
-                        }
-                    }
-                } catch (e) { /* Fail silently */ }
-
-                // The button shows the short form; the popover shows the full address
-                const fallbackText = ctx.url.replace(/^https?:\/\//, '');
-
-                return {
-                    node: card,
-                    previewText: card ? null : fallbackText,
-                    previewClick: () => window.open(ctx.url, '_blank')
-                };
-            },
-            execute: () => {
-                window.open(ctx.url, '_blank');
-                return { success: true };
+                const p = await page();
+                return p && (p.title || p.image) ? { node: $.mediaCard({ image: p.image, title: p.title, body: p.description }) }
+                    : { previewText: ctx.url.replace(/^https?:\/\//, ''), previewClick: () => tools.open(ctx.url) };   // the full address
             }
-        }, ctx, tools);
-
-        const copyBtn = createButton({
-            id: 'link-copy',
-            label: 'Copy',
-            icon: 'copy',
-            execute: () => {
-                tools.copy(ctx.url);
-                return { success: true, message: 'Link copied' };
-            }
-        }, ctx, tools);
-
-        tooltipContainer.appendChild(linkBtn);
-        if (ctx.isLink) tooltipContainer.appendChild(copyBtn);
+        }, ctx, tools));
+        if (ctx.isLink) tooltipContainer.appendChild(createButton({
+            id: 'link-copy', label: 'Copy', icon: 'copy',
+            execute: () => { tools.copy(ctx.url); return { success: true, message: 'Link copied' }; }
+        }, ctx, tools));
     }
 
     // After an action, from a button or a menu item: the bar closes, and the text is left as after
@@ -418,212 +351,146 @@
         else if (!ctx.isLink) window.getSelection().collapseToEnd();
     }
 
+    const stop = (fn) => (e) => { e.preventDefault(); e.stopPropagation(); fn(e); };
+
+    // Something clicked in the bar (a button, or an item in its menu) does its work, then either the bar is
+    // done (it closes; feedback as a toast), or it stays (keepOpen): where it is, showing what fits now, with
+    // the feedback in its strip. While it works, its own edits don't close the bar.
+    let notice = null;   // feedback for the bar that stays, shown once it has rebuilt
+    let pressed = false; // a press that started on the bar, until just after its release
+    let pressedAt = null;    // where the last such press was
+    async function act(keepOpen, run, ctx, e) {
+        if (keepOpen) window.LighthouseState.send('actStart');
+        const res = await run();
+        if (!keepOpen) {
+            if (res && res.message) showToast(res.message, res.success ? 'success' : 'error');
+            return finish(ctx);
+        }
+        notice = { text: res && res.message, at: [e.clientX, e.clientY], success: !res || res.success };
+        window.LighthouseContent.refresh();
+        setTimeout(() => window.LighthouseState.send('actEnd'), 200);
+    }
+
+    // A bar button for an action (see DEVELOPER.md, "Adding an action")
     function createButton(def, ctx, tools) {
-        let className = 'lighthouse-btn';
-        if (def.textOnly) className += ' text-only-btn';
-
         const btn = $.create('button', {
-            className: className,
-            attrs: { 'data-action': def.id },
-            children: [ 
-                $.createSmartIcon(def.icon, def.iconUrl, def.label, def.findIcon),
-                $.create('span', { className: 'lighthouse-label', text: def.label })
-            ]
+            className: 'lighthouse-btn' + (def.textOnly ? ' text-only-btn' : ''), attrs: { 'data-action': def.id },
+            children: [$.createSmartIcon(def.icon, def.iconUrl, def.label, def.findIcon), $.create('span', { className: 'lighthouse-label', text: def.label })]
         });
-
-        // Toggles (e.g. Read aloud) announce state changes with a 'lighthouse:state' event; no polling
-        if (typeof def.isActive === 'function') {
-            const sync = () => {
-                if (!btn.isConnected) return window.removeEventListener('lighthouse:state', sync);
-                btn.classList.toggle('is-active', !!def.isActive());
-            };
+        // Toggles (Read aloud) announce state changes with a 'lighthouse:state' event; no polling
+        if (def.isActive) {
+            const sync = () => btn.isConnected ? btn.classList.toggle('is-active', !!def.isActive()) : window.removeEventListener('lighthouse:state', sync);
             window.addEventListener('lighthouse:state', sync);
             sync();
         }
-
-        // A label worked out for this selection: text, or { quote } shown as a quoted value (Paste)
-        if (typeof def.dynamicLabel === 'function') {
-            Promise.resolve(def.dynamicLabel(ctx, tools)).then(val => {
-                const label = btn.querySelector('.lighthouse-label');
-                if (!val || !label) return;
-                if (typeof val === 'string') return void (label.textContent = val);
-                if (val.quote) {   // one line that pans through the value on hover, like the quoted selection
-                    label.replaceChildren($.create('span', { className: 'lighthouse-scroll-text', text: `"${val.quote}"` }));
-                    btn.classList.add('text-only-btn', 'is-quote');
-                }
-            }).catch(() => {});
-        }
+        // A label worked out for this selection: text, or { quote } shown as a quoted value that pans on hover (Paste)
+        if (def.dynamicLabel) (btn._relabel = () => Promise.resolve(def.dynamicLabel(ctx, tools)).then(val => {
+            const label = btn.querySelector('.lighthouse-label');
+            if (!val || !label) return;
+            if (typeof val === 'string') return void (label.textContent = val);
+            if (!val.quote) return;
+            label.replaceChildren($.create('span', { className: 'lighthouse-scroll-text', text: `"${val.quote}"` }));
+            btn.classList.add('text-only-btn', 'is-quote');
+        }).catch(() => {}))();
         if (def.info) btn._info = () => def.info(ctx, tools);
 
-        btn.onmousedown = async (e) => {
-            e.preventDefault(); e.stopPropagation();
-            if (def.keepOpen) actionActive = true;
-
-            const res = await def.execute(ctx, tools);
-            // Feedback: in the strip while the bar stays open; a toast when the bar is closing
-            if (res && res.message && !(def.keepOpen && stripNotice(res.message))) showToast(res.message, res.success ? 'success' : 'error');
-
-            if (!def.keepOpen) {
-                finish(ctx);
-            } else {
-                const now = (ctx.isInput || ctx.hasText) && tools.surface.read();
-                if (now) ctx.text = now.text;
-                redescribe(btn);
-                setTimeout(() => actionActive = false, 200);
-            }
-        };
-
-        if (def.preview) {
-            attachPopover(btn, async (popover) => {
-                const cacheKey = `${def.id}:${ctx.text || ctx.url || ''}`;
-                let data = previewCache.get(cacheKey);
-                if (!data) {
-                    data = await def.preview(ctx, tools);
-                    if (data && !data.live) cacheSet(cacheKey, data);   // live: re-read every time (clipboard, collection)
-                }
-                if (!data) return null;
-
-                const renderItems = () => {
-                    if (data.items) {
-                        data.items.forEach(item => {
-                            const sub = $.create('button', {
-                                className: 'lighthouse-btn' + (item.textOnly ? ' text-only-btn' : '') + (item.current ? ' is-current' : ''),
-                                children: [ item.color ? $.create('span', { className: 'lighthouse-swatch', style: `background: var(--lh-hl-${item.color})` }) : $.createSmartIcon(item.icon, item.iconUrl, item.label), $.create('span', { className: 'lighthouse-label', text: item.label }) ],
-                                events: { mousedown: (e) => { e.preventDefault(); e.stopPropagation(); item.onClick(); finish(ctx); } }
-                            });
-                            if (item.info) sub._info = () => item.info;   // what the strip says while it is pointed at
-                            popover.appendChild(sub);
-                        });
-                    }
-                };
-
-                if (data.prependItems) renderItems();
-
-                if (data.previewText) {
-                    const prevEl = $.create('div', { className: 'lighthouse-preview' + (data.isValue ? ' is-value' : '') });
-                    prevEl.appendChild($.create('span', { className: 'lighthouse-scroll-text', text: data.previewText }));
-                    if (data.previewClick) {
-                        prevEl.style.cursor = 'pointer';
-                        prevEl.onmousedown = (e) => {
-                            e.preventDefault(); e.stopPropagation();
-                            data.previewClick();
-                            destroy();
-                        };
-                    }
-                    popover.appendChild(prevEl);
-                } else if (data.node) {
-                    popover.appendChild($.create('div', { className: 'lighthouse-content', children: [data.node] }));
-                }
-
-                if (!data.prependItems) renderItems();
-
-                return popover;
-            });
-        }
-
+        // An action runs (execute), or opens its page (url). A click acts on the context of that moment, also after an await (Paste reads the clipboard first)
+        btn.onmousedown = stop((e) => {
+            const [c, t] = ctx === live ? [current, current.tools] : [ctx, tools];
+            act(def.keepOpen, def.execute ? () => def.execute(c, t) : () => { const url = def.url(c, t); if (url) t.open(url); return { success: !!url }; }, c, e);
+        });
+        if (def.preview) attachPopover(btn, (popover) => fillPreview(popover, def, ctx, tools));
         return btn;
+    }
+
+    // A preview from what an action's preview() returns: previewText (isValue: shown as a value; previewClick:
+    // what clicking it does) or node; items, the menu (label, icon or color, textOnly, current, info, onClick);
+    // live: asked again each time (clipboard, collection), else kept for the selection
+    async function fillPreview(popover, def, ctx, tools) {
+        const key = `${def.id}:${ctx.text || ctx.url || ''}`;
+        let data = previewCache.get(key);
+        if (!data) {
+            data = await def.preview(ctx, tools);
+            if (data && !data.live) cacheSet(key, data);
+        }
+        if (!data) return null;
+        if (data.previewText) {
+            const el = $.create('div', { className: 'lighthouse-preview' + (data.isValue ? ' is-value' : ''), children: [$.create('span', { className: 'lighthouse-scroll-text', text: data.previewText })] });
+            if (data.previewClick) { el.style.cursor = 'pointer'; el.onmousedown = stop(() => { data.previewClick(); destroy(); }); }
+            popover.appendChild(el);
+        } else if (data.node) {
+            popover.appendChild($.create('div', { className: 'lighthouse-content', children: [data.node] }));
+        }
+        for (const item of data.items || []) {
+            const sub = $.create('button', {
+                className: 'lighthouse-btn' + (item.textOnly ? ' text-only-btn' : '') + (item.current ? ' is-current' : ''),
+                children: [item.color ? $.create('span', { className: 'lighthouse-swatch', style: `background: var(--lh-hl-${item.color})` }) : $.createSmartIcon(item.icon, item.iconUrl, item.label),
+                    $.create('span', { className: 'lighthouse-label', text: item.label })],
+                events: { mousedown: stop((e) => act(item.keepOpen, () => item.onClick(), ctx, e)) }
+            });
+            if (item.info) sub._info = () => item.info;   // what the strip says while it is pointed at
+            popover.appendChild(sub);
+        }
+        return popover;
     }
 
     // --- UNIFIED POSITIONING LOGIC ---
     const MODE_CLASSES = ['mode-top', 'mode-bottom', 'mode-sticky-top', 'mode-sticky-bottom'];
 
-    function updatePosition(ctx) {
+    // The side the bar takes, chosen once per bar: { owner (the snapshot it opened for), side }
+    let barSide = null;
+
+    // inPlace: the same bar refreshed after an action: it keeps its left edge, so buttons that remain don't move
+    function updatePosition(ctx, inPlace = false) {
         if (!tooltipContainer || !ctx) return;
 
-        let rect;
-        const ends = ctx.hasText && !ctx.isLink && window.LighthouseHandles ? window.LighthouseHandles.selectionEnds() : null;
-        if (ctx.isLink || (ctx.isForm && !ends)) {
-            rect = ctx.element.getBoundingClientRect();
-        } else if (ctx.isForm) {
-            // Text selected in a field: its box from where the selection starts and ends (lines
-            // spanning the field when it wraps), then the same rules as on the page
-            const f = ctx.element.getBoundingClientRect(), multi = ends.end.dy - ends.start.dy > ends.start.lineHeight / 2;
-            const left = multi ? f.left : ends.start.dx, right = multi ? f.right : ends.end.dx;
-            const top = Math.max(f.top, ends.start.dy), bottom = Math.min(f.bottom, ends.end.dy + ends.end.lineHeight);
-            rect = { left, right, top, bottom, width: right - left, height: bottom - top };
-        } else {
-            const sel = window.LighthouseSelection.getActiveSelection();
-            if (!sel || !sel.rangeCount) return destroy();
-            const ext = window.LighthouseSelection.visibleExtent(sel);
-            rect = ext ? ext.box : sel.getRangeAt(0).getBoundingClientRect();
-            if (!rect || (rect.top === 0 && rect.left === 0 && rect.width === 0)) {
-                if (ctx.mouseX !== undefined && ctx.mouseY !== undefined) {
-                    rect = { left: ctx.mouseX, top: ctx.mouseY, right: ctx.mouseX, bottom: ctx.mouseY, width: 0, height: 0 };
-                } else {
-                    return destroy();
-                }
-            }
-        }
-
-        if (!rect || typeof rect.top !== 'number') return destroy();
-        
-        let anchorLeft = rect.left + (rect.width / 2);
-        if (ctx.mouseX !== undefined) anchorLeft = ctx.mouseX;
+        // Where the selection is drawn now; the pointer belongs to the selection the bar opened for.
+        // Links and a caret in a field: at the element. Page text drawn nowhere: at the pointer, or gone
+        const live = ctx.isLink || (ctx.isForm && !ctx.hasText) ? null : window.LighthouseSelection.current();
+        let drawn = null;
+        try { drawn = live && live.edges('painted'); } catch (e) { /* nothing to measure */ }
+        const ends = ctx.hasText ? drawn : null, pointer = ctx.snapshot && ctx.snapshot.pointer;
+        let rect = !live || (ctx.isForm && !ends) ? ctx.element.getBoundingClientRect() : drawn && drawn.box;
+        if (rect && live && !ctx.isForm && !rect.top && !rect.left && !rect.width) rect = pointer && { left: pointer.x, top: pointer.y, right: pointer.x, bottom: pointer.y, width: 0, height: 0 };
+        if (!rect) return destroy();
 
         // Centered on the selection, on the edge nearer the pointer (or caret); one line: above.
-        // Chosen once per selection. Links and fields without a selection: at the element.
-        const hasBox = !ctx.isLink && ctx.hasText && rect.width > 0;
-        let prefer = 'top';
-        if (hasBox) {
-            if (!ctx._barSide) {
+        // Chosen once per bar. Links and fields without a selection: at the element.
+        let anchorLeft = pointer ? pointer.x : rect.left + rect.width / 2, prefer = 'top';
+        if (!ctx.isLink && ctx.hasText && rect.width > 0) {
+            const owner = ctx.snapshot || ctx;
+            if (!barSide || barSide.owner !== owner) {
                 const multiLine = ends && ends.end.dy - ends.start.dy > ends.start.lineHeight / 2;
                 // Without a pointer, the caret's end: the start when the selection was extended backwards
-                const sel = window.LighthouseSelection.getActiveSelection();
-                const backward = sel && sel.anchorNode && sel.focusNode && (sel.anchorNode === sel.focusNode
-                    ? sel.focusOffset < sel.anchorOffset : !!(sel.anchorNode.compareDocumentPosition(sel.focusNode) & Node.DOCUMENT_POSITION_PRECEDING));
-                const y = ctx.mouseY !== undefined ? ctx.mouseY : ends ? (backward ? ends.start.dy : ends.end.dy) : rect.top;
-                ctx._barSide = multiLine && (y - rect.top) > (rect.bottom - y) ? 'bottom' : 'top';
+                const y = pointer ? pointer.y : ends ? (live.backward ? ends.start.dy : ends.end.dy) : rect.top;
+                barSide = { owner, side: multiLine && (y - rect.top) > (rect.bottom - y) ? 'bottom' : 'top' };
             }
-            prefer = ctx._barSide;
+            prefer = barSide.side;
             anchorLeft = rect.left + rect.width / 2;
         }
 
-        const TOOLTIP_H = tooltipContainer.offsetHeight || 48;
-        const VIEW_W = window.innerWidth;
-        const VIEW_H = window.innerHeight;
-        const MARGIN = $.token('--so-viewport-margin', 8);
-        const GAP = $.token('--so-bar-gap', 18);
-
+        const TOOLTIP_H = tooltipContainer.offsetHeight || 48, VIEW_W = window.innerWidth, VIEW_H = window.innerHeight;
+        const MARGIN = $.token('--so-viewport-margin', 8), GAP = $.token('--so-bar-gap', 18);
         // Below the selection, clear of the handle tabs hanging under the line boxes
         let idealBottom = rect.bottom + GAP;
-        if (ends && window.LighthouseState.get('addDragHandles', true)) {
+        if (ends && window.LighthouseState.get('addDragHandles')) {
             const lineBottom = Math.max(ends.start.dy + ends.start.lineHeight, ends.end.dy + ends.end.lineHeight);
             idealBottom = Math.max(idealBottom, lineBottom + $.token('--so-handle-gap') + $.token('--so-handle-height') + $.token('--so-level-space'));
         }
-        const idealTop = rect.top - TOOLTIP_H - GAP;
-        
-        let top, mode;
-
-        const fitsTop = idealTop >= MARGIN && idealTop <= VIEW_H - TOOLTIP_H - MARGIN;
-        const fitsBottom = idealBottom >= MARGIN && idealBottom <= VIEW_H - TOOLTIP_H - MARGIN;
-        if (prefer === 'bottom' && fitsBottom) {
-            top = idealBottom;
-            mode = 'bottom';
-        } else if (fitsTop) {
-            top = idealTop;
-            mode = 'top';
-        } else if (fitsBottom) {
-            top = idealBottom;
-            mode = 'bottom';
-        } else {
-            if (rect.top > VIEW_H - MARGIN) {
-                top = VIEW_H - TOOLTIP_H - MARGIN;
-                mode = 'sticky-bottom';
-            } else {
-                top = MARGIN;
-                mode = 'sticky-top';
-            }
-        }
+        const idealTop = rect.top - TOOLTIP_H - GAP, fits = (y) => y >= MARGIN && y <= VIEW_H - TOOLTIP_H - MARGIN;
+        // The preferred side if it fits, else above, else below, else stuck to the edge the selection went past
+        const [top, mode] = prefer === 'bottom' && fits(idealBottom) ? [idealBottom, 'bottom'] : fits(idealTop) ? [idealTop, 'top']
+            : fits(idealBottom) ? [idealBottom, 'bottom'] : rect.top > VIEW_H - MARGIN ? [VIEW_H - TOOLTIP_H - MARGIN, 'sticky-bottom'] : [MARGIN, 'sticky-top'];
 
         // The mode changes what the bar shows, so it's applied before measuring
         MODE_CLASSES.forEach(c => tooltipContainer.classList.toggle(c, c === `mode-${mode}`));
         const TOOLTIP_W = tooltipContainer.offsetWidth || 220;
         const originPoint = anchorLeft;
-        // Centered on its anchor, kept on screen, at a whole pixel
-        const left = Math.round(Math.max(MARGIN, Math.min(anchorLeft - TOOLTIP_W / 2, VIEW_W - TOOLTIP_W - MARGIN)));
+        // Centered on its anchor (a refresh: where it was), kept on screen, at a whole pixel
+        const snap = pendingSnapshot, start = inPlace && snap ? snap.left : anchorLeft - TOOLTIP_W / 2;
+        const left = Math.round(Math.max(MARGIN, Math.min(start, VIEW_W - TOOLTIP_W - MARGIN)));
 
         // Was showing: same spot, update in place; elsewhere, hand over
-        const snap = pendingSnapshot;
         pendingSnapshot = null;
         if (snap) {
             const moved = snap.mode !== `mode-${mode}` || Math.abs(snap.top - Math.round(top)) > 1;
@@ -704,10 +571,9 @@
     function destroy() {
         $.frame.cancel('bar');   // hidden before it could appear
         clearStrip();
-        if (window.LighthouseInput) window.LighthouseInput.deactivate('bar');
+        window.LighthouseInput.deactivate('bar');
         destroyCallbacks.forEach(cb => cb());
         if (tooltipContainer && tooltipContainer.classList.contains('visible')) {
-            $.logEvent('UI', 'DESTROY', 'Tooltip Hidden');
             pendingSnapshot = null;
             handOver(snapshot());
         }
@@ -729,8 +595,10 @@
         onDestroy: (cb) => destroyCallbacks.push(cb),
         contains: (t) => document.getElementById(HOST_ID)?.contains(t), 
         showToast, 
-        isActionActive: () => actionActive,
         get shadowRoot() { return shadowRoot; },
-        get isVisible() { return tooltipContainer && tooltipContainer.classList.contains('visible'); }
+        get pressed() { return pressed; },
+        // An event at the very spot of the last click on the bar: the pointer hasn't moved since, so a hover
+        // there came from the click's result (the bar closing over a link), not from the user
+        atLastPress: (e) => !!pressedAt && e.clientX === pressedAt[0] && e.clientY === pressedAt[1]
     };
 })();

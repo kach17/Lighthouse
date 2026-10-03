@@ -18,7 +18,7 @@ There's no bundler. No `import`/`export`. Each file wraps itself in an IIFE and 
 ## How an interaction flows
 
 ```
-User event → content.js → selection.js builds context → state.js picks mode → ui.js renders
+User event → selectionChanged (content.js) → selection.js builds the snapshot → State.send('selected') picks the mode → ui.js renders
 ```
 
 Each step is isolated. `state.js` doesn't touch the DOM. `ui.js` doesn't know about selection logic. `content.js` just connects them.
@@ -34,6 +34,7 @@ src/
 │   ├── actions.js           Every action: condition, execute, preview. Parsers (currency, units, dates...).
 │   ├── api.js               Context (prepareContext) and tools; external calls: translate, define, rates.
 │   ├── editing.js           Editing helpers for text fields (wrapping, brackets).
+│   ├── geometry.js          Where a selection is drawn: page extents, the text-field mirror, selection edges.
 │   ├── handles.js           Drag handles for adjusting selections.
 │   ├── input.js             Text field detection and behaviour.
 │   ├── language.js          On-device language checks: is a selection foreign, page and user languages.
@@ -44,7 +45,7 @@ src/
 │   └── ui.js                Shadow DOM tooltip rendering.
 ├── popup/popup.js           Settings UI.
 └── utils/
-    ├── config.js            Default settings.
+    ├── config.js            Every setting, declared once (default, options); validation.
     ├── data.js              Currencies, units, icons.
     └── utils.js             EventManager, Logger, shared helpers.
 ```
@@ -53,16 +54,19 @@ src/
 
 ## State modes
 
-`State.update(ctx)` transitions automatically. You never set the mode directly.
+The bar's state machine lives in `state.js`. Every change is a named event, `State.send(event, data)`; nothing else writes the mode, the field memory (`lastFocusedInput`) or the busy flags. The table of events and the transitions they make is at the top of `send`. `state.js` touches no DOM: `content.js` connects two effects, `show` and `hide`.
 
 | Mode | When |
 |---|---|
 | `HIDDEN` | Nothing to show |
 | `SELECTION` | Text selected on a page |
 | `SMART` | Text selected and a parser matched (math, currency, date, color, JSON, base64) |
-| `INPUT` | Focus inside a text field, no selection |
+| `INPUT` | A field: text selected in it, or the first click into it |
 | `LINK` | Hovering an external link |
-| `SNIPPET_MENU` | User typed `//` and matching shortcuts exist - set directly by `content.js`, not via `update` |
+| `SNIPPET_MENU` | User typed `//` and matching shortcuts exist |
+| `DRAGGING` | A handle is being dragged: no bar; the drag owns the selection |
+
+`State.acting` is on while a keep-open action runs (Case); `State.busy` (acting or dragging) means no new selection is read. `State.orderActions(candidates, matched)` is the one ordering: content-matched actions first, then the user's order.
 
 ---
 
@@ -75,12 +79,12 @@ src/
     category: 'selection',    // 'selection' | 'input' | 'smart' | 'link'
     icon: 'copy',             // key in ICON_REGISTRY in data.js
     condition: (ctx) => ctx.hasText,
-    execute: (ctx, tools) => {
+    execute: (ctx, tools) => {        // or url: (ctx) => '...' for an action that only opens a page
         tools.copy(ctx.text);
         return { success: true, message: 'Done' };
     },
     preview: (ctx, tools) => {         // optional, shown on hover: the result
-        return { previewText: '...' };
+        return { previewText: '...' };  // or node; items: the menu; isValue, previewClick, live (see fillPreview in ui.js)
     },
     info: (ctx, tools) => 'In German'  // optional, shown in the strip: a decision, never the result
 }
@@ -88,7 +92,7 @@ src/
 
 **What belongs in an action:** only what is its own: its decisions (Search's `engines()`, Case's `nextCase()`), its request payloads, its parse (`parse()` and `parsed(ctx)`, memoized per selection with `getParsed`) and its wording. These are properties of the action object, used by its hooks through `this` (hooks are always called as methods of their action). **What stays shared:** facts about the selection, computed once and read from `ctx` (`language`, `wordCount`, `cleanText`); the user's preferences, through one accessor each (`userLanguage()`, `userCurrency()`); domain libraries (dates, conversions in `math.js`, language names); preview patterns in the toolkit (`textPreview`, `buildCopyMenu`); and services, through `tools.query()`.
 
-`keepOpen: true` keeps the tooltip open after execute - useful for actions the user might repeat like Case toggle.
+After a click (a button, or an item in its menu), the bar either is **done** and closes, or **stays** (`keepOpen: true`): it keeps its place and refreshes for the selection as it now is, through the same pipeline as any selection, so the buttons are decided again (Clear all leaves Paste; Expand gets the expanded selection's buttons). Its feedback goes in the strip. Use `keepOpen` when the natural next step is in the same bar: Case, Expand, Read aloud, Clear all, one Spelling fix of several. A menu item takes `keepOpen` too. An action that rewrites text it should stay on keeps it selected (`tools.replace(text, { select: true })`).
 
 `dynamicLabel(ctx, tools)` (optional) works out the label for this selection: text, or `{ quote }` to show a value instead (Paste shows the clipboard text).
 
@@ -115,9 +119,17 @@ Each exists once; use it rather than writing another.
 | Shorten text for display | `LighthouseUtils.shorten(text, max)` |
 | Show something on screen | `LighthouseUtils.frame.draw(key, fn)`: runs in the next frame; `frame.cancel(key)` when hiding |
 | The page selection | `LighthouseSelection.getActiveSelection()` |
-| Where the selection starts and ends | `LighthouseHandles.selectionEnds()` |
+| Where the selection is drawn | `LighthouseSelection.current().edges('painted')` (handles, the bar) or `edges('content')` (Highlight); `LighthouseGeometry` underneath |
 | The selection's language | `ctx.language` / `ctx.foreign` (from `LighthouseLanguage.inspect()`) |
 | Copy to the clipboard | `tools.copy()` |
+| Prices and measurements in a text | `LighthouseMath.findAmounts(text)`: words from the browser (Intl) in the reader's and the page's languages |
+| A language tag's base language | `LighthouseData.baseLanguage(code)` ('de-AT' -> 'de'), everywhere, the background included |
+| The focused element | `LighthouseInput.focusedElement()`: also inside web components |
+| Read a setting | `LighthouseState.get(key)`: always a valid value (declared in `config.js`), so no fallback |
+| Add a setting | One line in `SETTINGS` in `config.js`; a popup switch or choice needs only `data-setting="key"` on its control |
+| Set a selection between two ends | `LighthouseSelection.selectBetween(snapshot, fixed, moving)`: field offsets or DOM points, either order |
+| Grow the selection by a word | `LighthouseSelection.extendByWord(atStart)` (through `surface`, so every surface alike) |
+| The text position under a point | `LighthouseGeometry.pointAt(snapshot, x, y)` |
 | Read a number (`1.234,5`, `1,234.5`) | `LighthouseMath.parseLocaleNumber()` |
 | Convert units and currencies | `LighthouseMath.convertUnit()`, `patterns()`, `convertAllText()` |
 | Is this a text field (and may we type in it) | `LighthouseInput.fieldKind(el, { forTyping })` |
@@ -125,6 +137,11 @@ Each exists once; use it rather than writing another.
 Only `page.css` is injected into web pages; everything else is `styles.css` in the shadow root. Timings and spacing live in `tokens.css`.
 
 ## The context
+
+`getContext()` also attaches `ctx.snapshot`: the selection frozen at that moment (`text` as selected, `cleanText`, `field` and `offsets` or a copy of the `range`, `caret`, `backward`, `pointer`) with two live parts, `edges(kind)`, measured against the current layout, and `language`, a promise decided once. Its `id` stays the same while the selection does. Nothing writes to it.
+
+Two questions, two snapshots. *Where is the selection now* (handles, positioning, Highlight): `LighthouseSelection.current()`, the snapshot of the live selection, the same object while it is unchanged, so a keep-open action that changes the selection (Expand) is followed. *Which bar is this* (the pointer it opened at, the side it took): `ctx.snapshot`, the one the pipeline read. Choose the kind of surface by `snapshot.field` (set only for plain fields), not by `ctx.isInput`, which is also true for rich editors.
+
 
 `LighthouseAPI.prepareContext()` builds `ctx` once per selection, so `getParsed()` results last the whole render. Besides the raw fields it has `cleanText`, `wordCount` (segmented for Chinese, Japanese, Thai), `hasDigit`, `hasLetter`, `number`, `tools`, and `foreign` / `language`.
 

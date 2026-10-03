@@ -21,17 +21,27 @@
 
     // Languages known by more than one code, so the detector and the browser agree
     const ALIASES = { nb: 'no', nn: 'no', iw: 'he', in: 'id', tl: 'fil', jw: 'jv', mo: 'ro' };
-    const base = (code) => { const b = (code || '').toLowerCase().split(/[-_]/)[0]; return ALIASES[b] || b; };
+    const base = (code) => { const b = global.LighthouseData.baseLanguage(code); return ALIASES[b] || b; };
 
     // Script codes that stand for several Unicode scripts
     const COMBINED = { Jpan: ['Hani', 'Hira', 'Kana'], Kore: ['Hang', 'Hani'], Hans: ['Hani'], Hant: ['Hani'] };
     const words = global.LighthouseUtils.segmenter('word');
 
+    // The language a writing system most likely is, as the browser knows it (Han: zh, kana: ja, Cyrillic: ru),
+    // for text in another script that the detector couldn't name. Han with kana is Japanese.
+    const SCRIPTS = ['Hira', 'Kana', 'Hang', 'Hani', 'Cyrl', 'Arab', 'Hebr', 'Grek', 'Thai', 'Deva', 'Beng', 'Taml', 'Telu',
+        'Knda', 'Mlym', 'Gujr', 'Guru', 'Geor', 'Armn', 'Ethi', 'Khmr', 'Laoo', 'Mymr', 'Sinh', 'Tibt'];
+    function scriptLanguage(text) {
+        const count = (s) => (text.match(new RegExp(`\\p{Script=${s}}`, 'gu')) || []).length;
+        let best = SCRIPTS.reduce((b, s) => count(s) > (b ? count(b) : 0) ? s : b, null);
+        if (best === 'Hani' && count('Hira') + count('Kana')) best = 'Hira';
+        try { return best && new Intl.Locale(`und-${best}`).maximize().language; } catch (e) { return null; }
+    }
+
     // Every language the user reads: the browser's list plus Lighthouse's language setting
     function userLanguages() {
         const langs = new Set((navigator.languages || [navigator.language]).map(base));
-        const setting = global.LighthouseState && global.LighthouseState.get('standards', null);
-        if (setting && setting.language) langs.add(base(setting.language));
+        langs.add(base(global.LighthouseState.get('standards').language));
         langs.delete('');
         return langs;
     }
@@ -116,7 +126,7 @@
         if (readable < letters / 2) {   // another writing system: foreign for certain, named when the detector is
             const named = await detect(context || text);   // sure, of a language written in the selection's letters
             const fits = named && (text.match(readableLetters(new Set([named.language]))) || []).length >= letters / 2;
-            return { foreign: true, language: fits ? named.language : null, reliable: !!(fits && named.reliable && (context || !short)) };
+            return { foreign: true, language: fits ? named.language : scriptLanguage(text), reliable: !!(fits && named.reliable && (context || !short)) };
         }
 
         const found = await detect(text);
@@ -135,7 +145,7 @@
     // Undetected text the user reads: the page's language if read, else the setting, else the browser's
     function readerLanguage() {
         const langs = userLanguages(), page = base(pageLanguage());
-        const setting = base(((global.LighthouseState && global.LighthouseState.get('standards', null)) || {}).language);
+        const setting = base(global.LighthouseState.get('standards').language);
         return (langs.has(page) && page) || setting || langs.values().next().value || null;
     }
 
@@ -161,16 +171,10 @@
 
 
 
-    /** The language a text is written in (e.g. for reading it aloud), or null when unknown */
-    async function languageOf(text) {
-        const found = await detect((text || '').trim());
-        return found && found.reliable ? found.language : null;
-    }
-
     /** The language the page declares (<html lang>), or '' */
     function pageLanguage() {
         return (document.documentElement && document.documentElement.lang || '').trim();
     }
 
-    global.LighthouseLanguage = { inspect, languageOf, userLanguages, pageLanguage };
+    global.LighthouseLanguage = { inspect, userLanguages, pageLanguage };
 })(window);

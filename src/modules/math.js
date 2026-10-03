@@ -1,5 +1,4 @@
 (function(global) {
-    let patterns = null;
     const MathLib = {
         /**
          * Evaluates plain arithmetic (+ - * / × ÷ % ^ and parentheses) without executing code, so it
@@ -98,13 +97,6 @@
         rate: (base, target) => base === target ? Promise.resolve({ rate: 1, asOf: null })
             : global.LighthouseUtils.ask('GET_RATE', { base, target }, { maxAge: 10 * 60 * 1000 })
                 .then(res => res && res.success ? { rate: res.rate, asOf: res.asOf || null } : null),
-        // Just the number, from the same request
-        fetchRate: (base, target) => MathLib.rate(base, target).then(found => found && found.rate),
-        // Currency and unit keys as regex alternatives, built once (CURRENCY_MAP and UNIT_CONVERSIONS don't change)
-        patterns: () => patterns || (patterns = {
-            currencyKeys: Object.keys(global.LighthouseData.CURRENCY_MAP).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
-            unitKeys: Object.keys(global.LighthouseData.UNIT_CONVERSIONS).join('|')
-        }),
         // { value, target, metric } for a value in a unit ("5", "km"), or null for an unknown unit
         convertUnit: (value, unit) => {
             const key = String(unit).toLowerCase();
@@ -114,27 +106,88 @@
         // Whether a unit is already in the user's system, so it needn't be converted
         inSystem: (unit, system) => global.LighthouseData[system === 'metric' ? 'METRIC_UNITS' : 'IMPERIAL_UNITS'].includes(String(unit).toLowerCase()),
 
-        convertAllText: async (text, targetCurrency, targetUnitSystem, rateFetcher) => {
-            const Data = global.LighthouseData;
-            if (!Data) return { text, modified: false };
-            const P = MathLib.patterns();
-            let modified = false;
-            let newText = text.replace(new RegExp(`(^|\\s)([\\d,.]+)\\s*°?(${P.unitKeys})(?=\\s|$|[.,])`, 'gi'), (m, s, v, u) => {
-                const conv = MathLib.inSystem(u, targetUnitSystem) ? null : MathLib.convertUnit(MathLib.parseLocaleNumber(v), u);
-                if (!conv) return m;
-                modified = true;
-                return `${s}${conv.value.toFixed(2)} ${conv.target}`;
+        // ---------- Prices and measurements in text ----------
+        // The words for them, from what the browser knows (Intl) in the given languages: every currency it lists,
+        // with its symbols and names, and each unit's short and long names; plus the codes, symbols and
+        // abbreviations in data.js (crypto, "lbs"). { currency: word -> [codes], unit: word -> unit key }, most
+        // likely first. Built by the background, once per set of languages (a tenth of a second), and kept.
+        buildWords: (langs) => {
+            const Data = global.LighthouseData, currency = {}, unit = {};
+            // Words match as written; names (longer than a symbol) also in lower case. Codes only in capitals: with every
+            // currency known, some are ordinary words ("ALL", "TOP"). A word that is a unit stays one ("5 km", not
+            // Bosnian marks "KM"; "3 ft", not forints "Ft")
+            const add = (map, word, value, forms = (w) => w.length > 3 ? [w, w.toLowerCase()] : [w]) => {
+                word = String(word).replace(/^°/, '').trim();
+                if (!word || /\d/.test(word)) return;
+                for (const w of forms(word)) {
+                    if (map === unit) map[w] = map[w] || value;
+                    else if (!unit[w]) (map[w] = map[w] || []).includes(value) || map[w].push(value);
+                }
+            };
+            const caseless = (w) => [w, w.toLowerCase(), w.toUpperCase()];   // data.js's words, as always: "25 eur", "20 C"
+            const each = (options, values, fn) => langs.forEach(lang => {
+                try { const f = new Intl.NumberFormat(lang, options); values.forEach(v => f.formatToParts(v).forEach(fn)); } catch (e) { /* unknown to this browser */ }
             });
-            const currRegex = new RegExp(`(^|\\s)([\\d,.]+)\\s*(${P.currencyKeys})|(^|\\s)(${P.currencyKeys})\\s*([\\d,.]+)`, 'gi');
-            for (const m of [...newText.matchAll(currRegex)]) {
-                const v = m[2] || m[6], k = (m[3] || m[5]).toUpperCase(), b = Data.CURRENCY_MAP[k];
-                if (!b || b === targetCurrency) continue;
-                const r = await rateFetcher(b, targetCurrency);
-                const amount = MathLib.parseLocaleNumber(v, b);
-                if (r && Number.isFinite(amount)) { modified = true; newText = newText.replace(m[0], `${m[1] || m[4] || ''}${(amount * r).toFixed(2)} ${targetCurrency}`); }
+            for (const [key, conv] of Object.entries(Data.UNIT_CONVERSIONS)) {
+                add(unit, key, key, caseless);
+                for (const display of ['short', 'long', 'narrow']) each({ style: 'unit', unit: conv.unit, unitDisplay: display }, [1, 2, 5], p => p.type === 'unit' && add(unit, p.value, key));
             }
-            return { text: newText, modified };
+            Object.entries(Data.CURRENCY_MAP).forEach(([word, code]) => add(currency, word, code, caseless));
+            for (const display of ['symbol', 'narrowSymbol', 'name']) for (const code of Intl.supportedValuesOf('currency')) {
+                each({ style: 'currency', currency: code, currencyDisplay: display }, display === 'name' ? [1, 2, 5] : [1],
+                    p => p.type === 'currency' && add(currency, p.value, code, /^[A-Z]{3}$/.test(p.value) ? (w) => [w] : undefined));
+            }
+            Intl.supportedValuesOf('currency').forEach(code => add(currency, code, code, (w) => [w]));
+            return { currency, unit };
+        },
+        // The page asks for the words of its reader's languages once it is idle; until they arrive, data.js's
+        // own codes, symbols and abbreviations are recognised
+        loadWords: (langs) => global.LighthouseUtils.ask('AMOUNT_WORDS', { langs }).then(res => {
+            if (res && res.success) { words = res.result; matcher = null; MathLib.findAmounts(''); }   // the pattern too, while idle
+        }),
+
+        /**
+         * Every price and measurement in a text: [{ index, length, value, currency } | { ..., unit }]. Numbers are read
+         * in any locale's writing ("1 234,50", "1.234,56", "1'234.50", "1,50,000"). A symbol several currencies share
+         * ("$", "¥") is the user's currency when it is one of them (prefer), else the most likely one.
+         */
+        findAmounts: (text, prefer = null) => {
+            if (!matcher) {
+                const own = words || MathLib.buildWords([]);   // no languages: data.js's words and the currency codes
+                const escape = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const alt = (map) => Object.keys(map).sort((x, y) => y.length - x.length).map(escape).join('|');
+                const NUM = String.raw`\d{1,3}(?:,\d{2})+,\d{3}(?:\.\d+)?|\d{1,3}(?:[\s'’.,]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?`;
+                // A currency before or after the number ("€25", "25 EUR"); a unit only after it ("5 km", "70 °F")
+                matcher = { own, re: new RegExp(String.raw`(?<![\p{L}\p{N}])(?:(${alt(own.currency)})\s*(${NUM})|(${NUM})\s*°?\s*(${alt({ ...own.currency, ...own.unit })}))(?![\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Greek}\p{N}])`, 'gu') };
+            }
+            const { own, re } = matcher, found = [];
+            for (const m of text.matchAll(re)) {
+                const word = m[1] || m[4], number = m[2] || m[3], codes = own.currency[word];
+                const currency = codes && (prefer && codes.includes(prefer) ? prefer : codes[0]);
+                const unit = !currency && own.unit[word];
+                if (!currency && !unit) continue;
+                const value = MathLib.parseLocaleNumber(number, currency || undefined);
+                if (Number.isFinite(value)) found.push({ index: m.index, length: m[0].length, value, ...(currency ? { currency } : { unit }) });
+            }
+            return found;
+        },
+        // A text with its prices in the user's currency and its measurements in the user's system ("Convert page")
+        convertText: async (text, targetCurrency, targetUnitSystem) => {
+            let out = text;
+            for (const a of MathLib.findAmounts(text, targetCurrency).reverse()) {   // from the end: earlier positions stay
+                let shown = null;
+                if (a.currency && a.currency !== targetCurrency) {
+                    const found = await MathLib.rate(a.currency, targetCurrency);
+                    if (found) shown = `${(a.value * found.rate).toFixed(2)} ${targetCurrency}`;
+                } else if (a.unit && !MathLib.inSystem(a.unit, targetUnitSystem)) {
+                    const conv = MathLib.convertUnit(a.value, a.unit);
+                    if (conv) shown = `${conv.value.toFixed(2)} ${conv.target}`;
+                }
+                if (shown) out = out.slice(0, a.index) + shown + out.slice(a.index + a.length);
+            }
+            return out === text ? null : out;
         }
     };
+    let words = null, matcher = null;   // the words for prices and measurements, and the pattern built from them
     global.LighthouseMath = MathLib;
 })(typeof self !== 'undefined' ? self : window);

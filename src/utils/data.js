@@ -21,19 +21,20 @@
     const METRIC_UNITS = ['c', 'km', 'kg', 'cm', 'm', 'g'];
     const IMPERIAL_UNITS = ['f', 'mi', 'lbs', 'in', 'ft', 'oz'];
 
+    // Each unit's key, its name to the browser (Intl, for its words in every language), and its conversion
     const UNIT_CONVERSIONS = {
-        'f':   { target: '°C',  func: v => (v - 32) * 5/9 },
-        'c':   { target: '°F',  func: v => (v * 9/5) + 32 },
-        'km':  { target: 'mi',  func: v => v * 0.621371 },
-        'mi':  { target: 'km',  func: v => v * 1.60934 },
-        'kg':  { target: 'lbs', func: v => v * 2.20462 },
-        'lbs': { target: 'kg',  func: v => v / 2.20462 },
-        'cm':  { target: 'in',  func: v => v * 0.393701 },
-        'in':  { target: 'cm',  func: v => v / 0.393701 },
-        'ft':  { target: 'm',   func: v => v * 0.3048 },
-        'm':   { target: 'ft',  func: v => v * 3.28084 },
-        'g':   { target: 'oz',  func: v => v * 0.035274 },
-        'oz':  { target: 'g',   func: v => v / 0.035274 }
+        'f':   { unit: 'fahrenheit', target: '°C',  func: v => (v - 32) * 5/9 },
+        'c':   { unit: 'celsius', target: '°F',  func: v => (v * 9/5) + 32 },
+        'km':  { unit: 'kilometer', target: 'mi',  func: v => v * 0.621371 },
+        'mi':  { unit: 'mile', target: 'km',  func: v => v * 1.60934 },
+        'kg':  { unit: 'kilogram', target: 'lbs', func: v => v * 2.20462 },
+        'lbs': { unit: 'pound', target: 'kg',  func: v => v / 2.20462 },
+        'cm':  { unit: 'centimeter', target: 'in',  func: v => v * 0.393701 },
+        'in':  { unit: 'inch', target: 'cm',  func: v => v / 0.393701 },
+        'ft':  { unit: 'foot', target: 'm',   func: v => v * 0.3048 },
+        'm':   { unit: 'meter', target: 'ft',  func: v => v * 3.28084 },
+        'g':   { unit: 'gram', target: 'oz',  func: v => v * 0.035274 },
+        'oz':  { unit: 'ounce', target: 'g',   func: v => v / 0.035274 }
     };
 
     // 3. Smart Snapping Pairs
@@ -67,6 +68,8 @@
     // ...and where they write year first (2026/12/25)
     const YMD_TIME_ZONES = /^(Asia\/(Shanghai|Chongqing|Harbin|Urumqi|Tokyo|Seoul|Pyongyang|Taipei|Ulaanbaatar)|Europe\/(Budapest|Vilnius))$/;
     // Characters that mark year, month and day in Chinese, Japanese and Korean dates
+    // A language tag's base language, lower case: 'de-AT' -> 'de', 'zh_Hant' -> 'zh'
+    const baseLanguage = (code) => String(code || '').toLowerCase().split(/[-_]/)[0];
     const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink', 'orange'];   // shades: --lh-hl-* in tokens.css
     const UNSPACED_SCRIPTS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
     const CJK_DATE_MARKS = { '年': 'y', '년': 'y', '月': 'm', '월': 'm', '日': 'd', '일': 'd' };
@@ -112,6 +115,8 @@
 
     // 6. Icons (Moved from actions.js)
     const ICONS = {
+        grip: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>`,
+        trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l.9 12.2A2 2 0 0 0 9.4 21h5.2a2 2 0 0 0 2-1.8L17.5 7"/></svg>`,
         copy: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
         cut: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line></svg>`,
         paste: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>`,
@@ -205,6 +210,7 @@
         SNAPPING_PAIRS,
         REVERSE_SNAPPING_PAIRS,
         CURRENCY_SYMBOLS,
+        baseLanguage,
         METRIC_UNITS,
         IMPERIAL_UNITS,
         LANGUAGES,
@@ -217,7 +223,6 @@
         foldText,
         getDateVocabulary,
         THEMES,
-        ICONS,
         cssFromTheme,
         resolveThemeCSS
     };

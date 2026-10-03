@@ -115,18 +115,22 @@
    bar's hover tone. It never widens the bar. */
 :is(#lighthouse-extension-tooltip, .lighthouse-ghost)[data-strip="on"] { height: auto; flex-wrap: wrap; row-gap: 0; }
 .lighthouse-strip {
-  flex: 0 0 calc(100% + 2 * var(--so-pad)); box-sizing: border-box; contain: inline-size; display: grid; align-items: center; order: -1;   /* edge to edge */
-  height: var(--so-strip-height); margin: calc(-1 * var(--so-pad)) calc(-1 * var(--so-pad)) var(--so-pad);
-  padding: 0 var(--so-btn-pad-x); border-bottom: 1px solid var(--so-level-hover);
+  /* Edge to edge, and adding nothing to the bar's width: a wrapping bar is as wide as its items would be
+     on one line, so the strip's own width is contained, its reach past the bar's padding is an offset
+     (not a margin), its text inset is on the text, and its gap to the buttons is cancelled */
+  flex: 0 0 calc(100% + 2 * var(--so-pad)); box-sizing: border-box; contain: inline-size; display: grid; align-items: center; order: -1;
+  position: relative; left: calc(-1 * var(--so-pad));
+  height: var(--so-strip-height); margin: calc(-1 * var(--so-pad)) calc(-1 * var(--so-gap)) var(--so-pad) 0;
+  border-bottom: 1px solid var(--so-level-hover);
   color: var(--so-ink-sub); font-size: var(--so-strip-font); line-height: 1; font-weight: 400;
   text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums;   /* counts change without shifting */
   pointer-events: none;
   /* Two stacked layers, so a change of subject crossfades; within one, the text swaps at once */
-  & > span { grid-area: 1 / 1; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--so-duration) var(--so-ease); }
+  & > span { grid-area: 1 / 1; padding: 0 var(--so-btn-pad-x); overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity var(--so-duration) var(--so-ease); }
   & > span.is-shown { opacity: 1; }
 }
 :is(#lighthouse-extension-tooltip, .lighthouse-ghost):is(.mode-bottom, .mode-sticky-top) > .lighthouse-strip {
-  order: 1; margin: var(--so-pad) calc(-1 * var(--so-pad)) calc(-1 * var(--so-pad));
+  order: 1; margin: var(--so-pad) calc(-1 * var(--so-gap)) calc(-1 * var(--so-pad)) 0;
   border-bottom: 0; border-top: 1px solid var(--so-level-hover);
 }
 /* The strip is part of the bar: on its side, the bar's own buttons are one strip row further from
@@ -252,7 +256,6 @@
 .lh-desc { margin: 0; padding: var(--so-space-1) var(--so-btn-pad-x) var(--so-btn-pad-x); color: var(--so-ink-sub); font: 400 calc(var(--so-font-size) - 1px)/1.45 var(--so-font-family); }
 .lh-section-title { margin: 0; padding: 14px var(--so-btn-pad-x) var(--so-space-3); color: var(--so-ink-sub); font: 600 calc(var(--so-font-size) - 1px)/1 var(--so-font-family); }
 .lh-section-title:first-child { padding-top: var(--so-space-2); }
-.lh-group-label { padding: var(--so-space-7) var(--so-btn-pad-x) var(--so-space-4) calc(var(--so-btn-pad-x) + var(--so-icon-size) + var(--so-space-4)); color: var(--so-ink-sub); font: 600 calc(var(--so-font-size) - 1px)/1 var(--so-font-family); }
 .lh-list { margin: 0; padding: 0; list-style: none; }
 
 .lh-row {
@@ -278,7 +281,6 @@
 
 /* State in words: a list row just toggled, before it moves */
 .lh-row-state { flex: none; color: var(--so-ink-sub); font-weight: 400; }
-.lh-row-state.is-on { color: var(--so-ink); font-weight: var(--so-font-weight); }
 
 /* Delete appears on hover, where the state would sit */
 .lh-row-delete { display: none; flex: none; padding: var(--so-space-2); margin-right: -4px; border: 0; border-radius: calc(var(--so-btn-radius) - 1px); background: transparent; color: var(--so-ink-sub); cursor: pointer; }

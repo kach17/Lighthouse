@@ -1,35 +1,4 @@
 (function() {
-  class Logger {
-    constructor() {
-      this.prefix = '[Lighthouse]';
-    }
-
-    get isDebug() {
-      if (window.LighthouseState && window.LighthouseState.settings) {
-          return !!window.LighthouseState.get('debugMode', false);
-      }
-      return !!(window.LighthouseConfig && window.LighthouseConfig.defaults && window.LighthouseConfig.defaults.debugMode);
-    }
-
-    log(...args) {
-      if (this.isDebug) console.log(this.prefix, ...args);
-    }
-
-    warn(...args) {
-      if (this.isDebug) console.warn(this.prefix, ...args);
-    }
-
-    error(...args) {
-      if (this.isDebug) console.error(this.prefix, ...args);
-    }
-
-    info(...args) {
-      if (this.isDebug) console.info(this.prefix, ...args);
-    }
-  }
-
-  const logger = new Logger();
-
   const safeImageUrl = (value) => {
     try { const u = new URL(value, location.href); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; }
     catch (e) { return ''; }
@@ -39,7 +8,6 @@
   let languageNames = null;   // Intl.DisplayNames, made on first use
   const answers = new Map();  // ask(): question -> { at, answer }
   window.LighthouseUtils = {
-    Logger: logger,
     /**
      * The one media card (Wiki summaries, link previews), built as elements: text from pages and
      * services is set as text, never parsed as markup. The image must be an http(s) address.
@@ -94,7 +62,7 @@
      */
     createSmartIcon: (icon, url, name, findIcon = null) => {
         // 1. Registry Lookup (High Priority)
-        if (icon && window.LighthouseIcons && window.LighthouseIcons[icon]) {
+        if (icon && window.LighthouseIcons[icon]) {
             return window.LighthouseUtils.getIconFromSvg(window.LighthouseIcons[icon]);
         }
         
@@ -131,9 +99,7 @@
             } catch (e) { /* Invalid URL */ }
         }
         
-        // 4. Fallback Registry Key
-        const globeSvg = window.LighthouseIcons && window.LighthouseIcons['search'] ? window.LighthouseIcons['search'] : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
-        return window.LighthouseUtils.getIconFromSvg(globeSvg);
+        return window.LighthouseUtils.getIconFromSvg(window.LighthouseIcons.search);   // no icon: the generic one
     },
 
 
@@ -288,29 +254,6 @@
         const n = parseFloat(raw);
         if (!Number.isFinite(n)) return fallback;
         return /\ds$/.test(raw) && !/ms$/.test(raw) ? n * 1000 : n;
-    },
-
-    logEvent: (component, event, details = '') => {
-        if (!logger.isDebug) return;
-
-        const State = window.LighthouseState;
-        const UI = window.LighthouseUI;
-        const Handles = window.LighthouseHandles;
-
-        const comp = component.toUpperCase().padEnd(8, ' ');
-        const evt = event.toUpperCase().padEnd(10, ' ');
-
-        console.groupCollapsed(`[Lighthouse] ${comp}| ${evt}| ${details}`);
-        
-        console.log({
-            Mode: State?.mode,
-            Context: State?.ctx ? { tag: State.ctx.element?.tagName, isInput: State.ctx.isInput } : 'N/A',
-            UI: UI?.isVisible ? 'VISIBLE' : 'HIDDEN',
-            Handles: Handles?.areVisible ? 'VISIBLE' : 'HIDDEN',
-            Actions: State?.activeActions?.length || 0
-        });
-        
-        console.groupEnd();
     }
   };
 })();

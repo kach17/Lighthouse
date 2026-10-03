@@ -7,19 +7,14 @@
     const Utils = global.LighthouseUtils;
     const MathLib = global.LighthouseMath;
     const Data = global.LighthouseData;
-    const Config = global.LighthouseConfig;
-
-    const getSettings = () => (global.LighthouseState && global.LighthouseState.settings) ? global.LighthouseState.settings : (Config ? Config.defaults : {});
-    const getStandards = () => getSettings().standards || {};
-    // The user's preferences, as every action reads them
-    const userLanguage = () => getStandards().language || 'en';
-    const userCurrency = () => getStandards().currency || 'USD';
-
-    // --- Shared Helpers ---
-
-
-
-
+    // Voices load in the background the first time they are asked for: asked now, so Read aloud can tell
+    if (global.speechSynthesis) global.speechSynthesis.getVoices();
+    // The user's settings, as every action reads them (State holds only valid ones)
+    const setting = (key) => global.LighthouseState.get(key);
+    const userLanguage = () => setting('standards').language;
+    const userCurrency = () => setting('standards').currency;
+    // The language a selection is read in, as a base code ('de'): its own if known, else the user's
+    const baseLanguage = (ctx) => Data.baseLanguage(ctx.language || userLanguage());
     const buildUrl = (template, text) => template.replace('%s', encodeURIComponent(text));
 
 
@@ -29,7 +24,7 @@
     // so date formats match as regular expressions over that shape.
     function dateLanguages() {
         const Lang = global.LighthouseLanguage;
-        const langs = new Set(Lang ? [...Lang.userLanguages(), Lang.pageLanguage().split('-')[0].toLowerCase()] : []);
+        const langs = new Set(Lang ? [...Lang.userLanguages(), Data.baseLanguage(Lang.pageLanguage())] : []);
         langs.add('en');
         langs.delete('');
         return [...langs].sort();
@@ -294,37 +289,18 @@
             icon: 'stack',
             condition: (ctx) => ctx.hasText,
             execute: async (ctx, tools) => {
-                const copyStack = await ctx.tools.collection.get();
-                copyStack.push(ctx.text);
-                await ctx.tools.collection.set(copyStack);
-                return { success: true, message: `${copyStack.length} collected` };
+                const items = [...await tools.collection.get(), ctx.text];
+                await tools.collection.set(items);
+                return { success: true, message: `${items.length} collected` };
             },
+            // What is collected (read fresh each time), to copy at once or clear
             preview: async (ctx, tools) => {
-                const copyStack = await ctx.tools.collection.get();
-                if (copyStack.length === 0) return { previewText: 'Nothing collected yet', live: true };
-                return {
-                    type: 'menu',
-                    live: true,
-                    previewText: `${copyStack.length} collected`,
-                    items: [
-                        {
-                            label: 'Copy all',
-                            icon: 'copy',
-                            onClick: () => {
-                                tools.copy(copyStack.join('\n\n'));
-                                tools.toast('Copied Stack!');
-                            }
-                        },
-                        {
-                            label: 'Clear',
-                            icon: 'clear',
-                            onClick: async () => {
-                                await ctx.tools.collection.set([]);
-                                tools.toast('Stack Cleared');
-                            }
-                        }
-                    ]
-                };
+                const items = await tools.collection.get();
+                if (!items.length) return { previewText: 'Nothing collected yet', live: true };
+                return { live: true, previewText: `${items.length} collected`, items: [
+                    { label: 'Copy all', icon: 'copy', onClick: () => { tools.copy(items.join('\n\n')); tools.toast('Copied'); } },
+                    tools.collection.clearItem()
+                ] };
             }
         },
         {
@@ -333,7 +309,7 @@
             category: 'selection',
             icon: 'search',
             condition: (ctx) => ctx.hasText && !ctx.isLink,
-            engines() { return (getSettings().searchEngines || []).filter(e => e.enabled); },
+            engines() { return setting('searchEngines').filter(e => e.enabled); },
             info() {
                 const [engine] = this.engines();
                 return engine ? `Search with ${engine.name}` : null;
@@ -348,7 +324,6 @@
                 const engines = this.engines();
                 if (engines.length <= 1) return null; 
                 return {
-                    type: 'menu',
                     items: engines.slice(1).map(eng => ({
                         label: eng.name,
                         info: `Search with ${eng.name}`,
@@ -368,26 +343,19 @@
             translation(ctx, tools) { return ctx.text.length > this.MAX ? Promise.resolve(null) : tools.query('TRANSLATE', { text: ctx.text, targetLang: userLanguage() }); },
             // Only for text in a language the user doesn't read (decided on-device by language.js)
             condition: (ctx) => ctx.hasText && !ctx.isLink && ctx.foreign !== false,
-            execute: (ctx) => {
-                const tl = userLanguage();
-                ctx.tools.open(buildUrl(`https://translate.google.com/?sl=auto&tl=${tl}&text=%s&op=translate`, ctx.text));
-                return { success: true };
-            },
+            url: (ctx) => buildUrl(`https://translate.google.com/?sl=auto&tl=${userLanguage()}&text=%s&op=translate`, ctx.text),
             // The languages it was read as and translated into (from the preview's own request)
             async info(ctx, tools) {
                 const res = await this.translation(ctx, tools);
                 const from = res && res.sourceLang && Utils.languageName(res.sourceLang);
-                const to = res && Utils.languageName(String(res.targetLang || '').split('-')[0]);
+                const to = res && Utils.languageName(Data.baseLanguage(res.targetLang));
                 return from && to && from !== to ? `${from} → ${to}` : null;
             },
             async preview(ctx, tools) {
                 if (ctx.text.length > this.MAX) return { previewText: `Over ${this.MAX.toLocaleString()} characters: click to open Google Translate` };
                 const res = await this.translation(ctx, tools);
                 if (!res || !res.text) return { previewText: 'Translation unavailable' };
-                const targetLang = userLanguage().split('-')[0];
-                if (res.sourceLang === targetLang) {
-                    return { previewText: 'Already in your language' };
-                }
+                if (res.sourceLang === Data.baseLanguage(userLanguage())) return { previewText: 'Already in your language' };
                 return tools.textPreview(res.text);
             }
         },
@@ -397,16 +365,12 @@
             category: 'selection',
             icon: 'dictionary',
             entry(ctx, tools) {
-                const Lang = global.LighthouseLanguage;
                 return tools.query('DEFINE', { text: ctx.cleanText, wordLang: ctx.language, targetLang: userLanguage(),
-                    readerLangs: Lang && Lang.userLanguages ? [...Lang.userLanguages()] : [] });
+                    readerLangs: [...global.LighthouseLanguage.userLanguages()] });
             },
             // One word in a language the user reads (Translate covers the rest)
             condition: (ctx) => ctx.hasText && ctx.wordCount === 1 && ctx.hasLetter && ctx.foreign !== true,
-            execute: (ctx) => {
-                ctx.tools.open(buildUrl('https://www.google.com/search?q=define+%s', ctx.text));
-                return { success: true };
-            },
+            url: (ctx) => buildUrl('https://www.google.com/search?q=define+%s', ctx.text),
             // Which language the word was read as ('Gift': German or English), and if the definition was translated
             async info(ctx, tools) {
                 const res = await this.entry(ctx, tools);
@@ -417,7 +381,7 @@
                 const res = await this.entry(ctx, tools);
                 if (!res) return { previewText: 'Definition unavailable' };
                 const open = { label: 'Open in Wiktionary', icon: 'dictionary', onClick: () => ctx.tools.open(res.link) };
-                if (!res.definition) return { type: 'menu', previewText: 'No definition found', items: [open] };
+                if (!res.definition) return { previewText: 'No definition found', items: [open] };
                 return tools.textPreview(res.definition, [open]);
             }
         },
@@ -426,36 +390,15 @@
             label: 'Wiki',
             category: 'selection',
             icon: 'wikipedia',
-            condition: (ctx) => {
-                if (!ctx.hasText || ctx.isLink || ctx.isInput) return false;
-                if (ctx.wordCount < 1 || ctx.wordCount > 4) return false;
-                return /^\p{Lu}/u.test(ctx.text.trim());
-            },
-            info: async (ctx) => {
-                const name = Utils.languageName(String(ctx.language || userLanguage()).split('-')[0]);
-                return name ? `${name} Wikipedia` : null;
-            },
-            execute: async (ctx) => {
-                const lang = String(ctx.language || userLanguage()).split('-')[0];
-                const title = ctx.text.trim().replace(/\s+/g, '_');
-                ctx.tools.open(buildUrl(`https://${lang}.wikipedia.org/wiki/%s`, title));
-                return { success: true };
-            },
-            preview: async (ctx, tools) => {
-                const lang = String(ctx.language || userLanguage()).split('-')[0];
-                const title = ctx.text.trim().replace(/\s+/g, '_');
-                try {
-                    const data = await tools.query('WIKI_SUMMARY', { lang, title });
-                    if (!data) return { previewText: 'Article not found' };
-                    if (data.type === 'disambiguation' || data.type === 'not_found') {
-                        return { previewText: 'Article not found' };
-                    }
-                    let extract = data.extract || '';
-                    extract = Utils.excerpt(extract, 140);
-                    return { node: Utils.mediaCard({ image: data.thumbnail?.source, title: data.title, desc: data.description, body: extract }) };
-                } catch (e) {
-                    return { previewText: 'Error fetching Wiki' };
-                }
+            // A capitalised name of up to four words, on the page
+            condition: (ctx) => ctx.hasText && !ctx.isLink && !ctx.isInput && ctx.wordCount >= 1 && ctx.wordCount <= 4 && /^\p{Lu}/u.test(ctx.text.trim()),
+            article: (ctx) => ({ lang: baseLanguage(ctx), title: ctx.text.trim().replace(/\s+/g, '_') }),
+            info: (ctx) => { const name = Utils.languageName(baseLanguage(ctx)); return name ? `${name} Wikipedia` : null; },
+            url(ctx) { const { lang, title } = this.article(ctx); return buildUrl(`https://${lang}.wikipedia.org/wiki/%s`, title); },
+            async preview(ctx, tools) {
+                const data = await tools.query('WIKI_SUMMARY', this.article(ctx));
+                if (!data || data.type === 'disambiguation' || data.type === 'not_found') return { previewText: 'Article not found' };
+                return { node: Utils.mediaCard({ image: data.thumbnail?.source, title: data.title, desc: data.description, body: Utils.excerpt(data.extract || '', 140) }) };
             }
         },
         {
@@ -463,26 +406,37 @@
             label: 'Read aloud',
             category: 'selection',
             icon: 'speak',
-            condition: (ctx) => ctx.hasText && ('speechSynthesis' in window),
+            // Shown only when the browser has a voice for the text's language (the voices installed, as
+            // speechSynthesis lists them), so text is never read by a voice of another language, or not at all
+            condition(ctx) { return ctx.hasText && !!this.voice(ctx); },
             keepOpen: true,
             isActive: () => window.speechSynthesis.speaking,
-            info: async (ctx) => {
-                const name = Utils.languageName((ctx.language || userLanguage()));
-                return name ? `Reads in ${name}` : null;
+            lang: (ctx) => ctx.language || userLanguage(),
+            // The voice: the reader's own variant of the language (fr-CA), else the language's most likely one
+            // (Mandarin for zh, not Cantonese), else the browser's default for it
+            voice(ctx) {
+                if (!('speechSynthesis' in window)) return null;
+                const lang = Data.baseLanguage(this.lang(ctx)), region = (code) => (code.split(/[-_]/)[1] || '').toUpperCase();
+                const voices = window.speechSynthesis.getVoices().filter(v => Data.baseLanguage(v.lang) === lang);
+                const own = (navigator.languages || []).find(l => Data.baseLanguage(l) === lang && region(l));
+                let likely = null; try { likely = new Intl.Locale(lang).maximize().region; } catch (e) { /* unknown code */ }
+                return voices.find(v => own && region(v.lang) === region(own)) || voices.find(v => region(v.lang) === likely)
+                    || voices.find(v => v.default) || voices[0] || null;
             },
-            execute: async (ctx) => {
+            info(ctx) { const name = Utils.languageName(this.lang(ctx)); return name ? `Reads in ${name}` : null; },
+            execute(ctx) {   // the button follows the speech itself
                 const announce = () => window.dispatchEvent(new CustomEvent('lighthouse:state'));
                 if (window.speechSynthesis.speaking) {
                     window.speechSynthesis.cancel();
                     announce();
                     return { success: true, message: 'Stopped reading' };
-                } else {
-                    const u = new SpeechSynthesisUtterance(ctx.text);
-                    u.lang = (ctx.language || userLanguage());
-                    u.onstart = u.onend = u.onerror = announce;   // the button follows the speech itself
-                    window.speechSynthesis.speak(u);
-                    return { success: true };
                 }
+                const u = new SpeechSynthesisUtterance(ctx.text), voice = this.voice(ctx);
+                u.voice = voice;
+                u.lang = voice.lang;
+                u.onstart = u.onend = u.onerror = announce;
+                window.speechSynthesis.speak(u);
+                return { success: true };
             }
         },
         {
@@ -492,15 +446,14 @@
             icon: 'highlighter',
             condition: (ctx) => ctx.hasText && !ctx.isInput && !ctx.isLink,
             execute: (ctx) => {
-                if (window.LighthouseMarkers) window.LighthouseMarkers.markTextSelection(ctx.text, getSettings().highlightColor || 'yellow');
+                if (window.LighthouseMarkers) window.LighthouseMarkers.markTextSelection(ctx.text, setting('highlightColor'));
                 return { success: true, message: 'Highlighted' };
             },
-            info: () => `Highlights in ${getSettings().highlightColor || 'yellow'}`,   // the color a click uses
+            info: () => `Highlights in ${setting('highlightColor')}`,   // the color a click uses
             // Hover: the colors; the one picked becomes the default
             preview: (ctx) => ({
-                type: 'menu',
                 items: Data.HIGHLIGHT_COLORS.map(color => ({
-                    label: color[0].toUpperCase() + color.slice(1), color, current: color === (getSettings().highlightColor || 'yellow'),
+                    label: color[0].toUpperCase() + color.slice(1), color, current: color === (setting('highlightColor')),
                     info: `Highlights in ${color}`,
                     onClick: () => { global.LighthouseState.set('highlightColor', color); window.LighthouseMarkers.markTextSelection(ctx.text, color); }
                 }))
@@ -524,17 +477,9 @@
             category: 'selection',
             icon: 'qr',
             condition: (ctx) => ctx.text.length > 0 && ctx.text.length <= 1000,
-            execute: (ctx) => {
-                const url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(ctx.text)}`;
-                ctx.tools.open(url);
-                return { success: true };
-            },
-            preview: (ctx) => {
-                const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(ctx.text)}`;
-                return {
-                    node: Utils.create('img', { className: 'qr-code', attrs: { src: url, alt: 'QR code' } })
-                };
-            }
+            code: (ctx, size) => `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(ctx.text)}`,
+            url(ctx) { return this.code(ctx, 300); },
+            preview(ctx) { return { node: Utils.create('img', { className: 'qr-code', attrs: { src: this.code(ctx, 150), alt: 'QR code' } }) }; }
         },
 
         // --- INPUT ACTIONS ---
@@ -545,7 +490,7 @@
             icon: 'cut',
             condition: (ctx) => ctx.isInput && ctx.hasText,
             execute: (ctx, tools) => { 
-                ctx.element.focus(); 
+                ctx.element.focus();   // the copy reads the field's own selection
                 tools.copySelection();
                 tools.replace('');
                 return { success: true };
@@ -563,26 +508,24 @@
                 return text ? { quote: Utils.excerpt(text, 120) } : null;
             },
             execute: async (ctx, tools) => {
-                ctx.element.focus();
-                let text = await tools.readClipboard();
+                const text = await tools.readClipboard();
                 if (!text) return { success: false, message: 'Clipboard empty' };
                 tools.replace(text.trim());
                 return { success: true };
             },
             // The clipboard, and anything collected with Collect (read fresh each time)
             preview: async (ctx, tools) => {
-                const stack = await ctx.tools.collection.get();
+                const stack = await tools.collection.get();
                 if (!stack.length) return null;   // the label already shows the clipboard
                 const singleLine = !ctx.tools.surface.multiline;
                 const flat = (s) => s.replace(/\s+/g, ' ').trim();
-                const insert = (value) => { if (ctx.element) ctx.element.focus(); tools.replace(value); };
+                const insert = (value) => tools.replace(value);
                 return {
-                    type: 'menu',
                     live: true,
                     items: [
                         ...stack.slice(-5).reverse().map(s => ({ label: Utils.excerpt(s, 30), textOnly: true, onClick: () => insert(singleLine ? flat(s) : s) })),
                         { label: `Paste all (${stack.length})`, icon: 'stack', onClick: () => insert(singleLine ? stack.map(flat).join(' ') : stack.join('\n\n')) },
-                        { label: 'Clear collection', icon: 'clear', onClick: async () => { await ctx.tools.collection.set([]); tools.toast('Collection cleared'); } }
+                        tools.collection.clearItem()
                     ]
                 };
             }
@@ -593,11 +536,7 @@
             category: 'input',
             icon: 'backspace',
             condition: (ctx) => ctx.isInput && ctx.hasText,
-            execute: (ctx, tools) => {
-                ctx.element.focus();
-                tools.replace('');
-                return { success: true };
-            }
+            execute: (ctx, tools) => { tools.replace(''); return { success: true }; }
         },
         {
             id: 'clear',
@@ -605,11 +544,8 @@
             category: 'input',
             icon: 'clear',
             condition: (ctx) => { const r = ctx.isInput && !ctx.hasText && ctx.tools.surface.read('all'); return !!r && !!(r.before + r.text + r.after); },
-            execute: (ctx, tools) => {
-                ctx.element.focus();
-                tools.replace('', { span: 'all' });
-                return { success: true };
-            }
+            keepOpen: true,   // emptied to be filled again: Paste stays where it was
+            execute: (ctx, tools) => { tools.replace('', { span: 'all' }); return { success: true }; }
         },
         {
             id: 'case',
@@ -622,7 +558,8 @@
                 if (t === t.toLowerCase()) return { name: 'Title Case', apply: (s) => s.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase()) };
                 return { name: 'UPPERCASE', apply: (s) => s.toUpperCase() };
             },
-            condition: (ctx) => ctx.hasText && ctx.isInput,
+            // Only text that has case (not numbers, symbols, or scripts without it, like Chinese)
+            condition: (ctx) => ctx.hasText && ctx.isInput && ctx.text.toUpperCase() !== ctx.text.toLowerCase(),
             keepOpen: true,
             info(ctx) { return `Next: ${this.nextCase(ctx.text).name}`; },
             execute(ctx, tools) {
@@ -677,17 +614,18 @@
                     .sort((a, b) => a.offset - b.offset)
                     .filter((i, n, all) => n === 0 || i.offset >= all[n - 1].offset + all[n - 1].length);
                 const credit = { label: 'Checked by LanguageTool', icon: 'link', onClick: () => ctx.tools.open('https://languagetool.org') };
-                if (!inside.length) return { type: 'menu', previewText: 'No issues found ✓', items: [credit] };
+                if (!inside.length) return { previewText: 'No issues found ✓', items: [credit] };
                 const apply = (list) => [...list].sort((a, b) => b.offset - a.offset)
                     .reduce((out, i) => out.slice(0, i.offset) + i.replacements[0] + out.slice(i.offset + i.length), selected);
                 const items = inside.slice(0, 5).map(i => ({
                     label: `${selected.substr(i.offset, i.length)} → ${i.replacements[0]}`,
                     textOnly: true,
-                    onClick: () => tools.replace(apply([i]))
+                    keepOpen: inside.length > 1,   // one fix of several: the text stays selected, and the bar with the rest
+                    onClick: () => tools.replace(apply([i]), { select: true })
                 }));
                 if (inside.length > 1) items.push({ label: `Fix all (${inside.length})`, icon: 'check', onClick: () => tools.replace(apply(inside)) });
                 items.push(credit);
-                return { type: 'menu', items };
+                return { items };
             }
         },
 
@@ -697,29 +635,16 @@
             label: 'Calculate',
             category: 'smart',
             icon: 'math',
-            condition: (ctx) => !ctx.isLink && ctx.text.length < 50 && (MathLib.safeCalculate(ctx.text) !== null),
-            dynamicLabel: (ctx) => {
-                const res = MathLib.safeCalculate(ctx.text);
-                return res !== null ? `∑ ${Number(res.toFixed(4))}` : null;
+            // The result, as shown and copied ("40"), or null
+            result: (ctx) => getParsed(ctx, 'math', () => { const r = ctx.text.length < 50 ? MathLib.safeCalculate(ctx.text) : null; return r === null ? null : String(Number(r.toFixed(4))); }),
+            condition(ctx) { return !ctx.isLink && this.result(ctx) !== null; },
+            dynamicLabel(ctx) { return `∑ ${this.result(ctx)}`; },
+            execute(ctx, tools) {   // in a field the result replaces the calculation, as JSON and Decode do; else it is copied
+                if (ctx.isInput) tools.replace(this.result(ctx)); else tools.copy(this.result(ctx));
+                return { success: true, message: `Result: ${this.result(ctx)}` };
             },
-            execute: (ctx, tools) => {
-                const res = MathLib.safeCalculate(ctx.text);
-                const resStr = String(Number(res.toFixed(4)));
-                tools.copy(resStr);
-                return { success: true, message: `Result: ${resStr}` };
-            },
-            preview: (ctx, tools) => {
-                const res = MathLib.safeCalculate(ctx.text);
-                const resultText = `= ${Number(res.toFixed(4))}`;
-                return {
-                    previewText: resultText,
-                    isValue: true,
-                    items: [{
-                        label: 'Copy',
-                        icon: 'copy',
-                        onClick: () => tools.copy(resultText.replace('= ', ''))
-                    }]
-                };
+            preview(ctx, tools) {
+                return { previewText: `= ${this.result(ctx)}`, isValue: true, items: [{ label: 'Copy', icon: 'copy', onClick: () => tools.copy(this.result(ctx)) }] };
             }
         },
         {
@@ -727,22 +652,18 @@
             label: 'Convert',
             category: 'smart',
             icon: 'currency',
-            // "25 EUR", "€25": { amount, base }, or null
-            pattern: null,
+            // The first price in a short selection ("25 EUR", "€25", "1,500円"): { amount, base }, or null
             parse(text) {
-                const raw = text.trim().toUpperCase();
-                if (!/\d/.test(raw) || raw.length > 50) return null;
-                if (!this.pattern) {
-                    const keys = MathLib.patterns().currencyKeys;
-                    this.pattern = new RegExp(`([\\d\\s]+(${keys})|(${keys})[\\d\\s]+)`, 'i');
-                }
-                if (!this.pattern.test(raw)) return null;
-                const baseEntry = Object.entries(Data.CURRENCY_MAP).find(([k]) => raw.includes(k));
-                const base = baseEntry ? baseEntry[1] : 'USD';
-                const amount = MathLib.parseLocaleNumber(raw, base);
-                return { amount, base };
+                const found = text.length <= 50 && MathLib.findAmounts(text, userCurrency()).find(a => a.currency);
+                return found ? { amount: found.value, base: found.currency } : null;
             },
             parsed(ctx) { return getParsed(ctx, 'currency', () => this.parse(ctx.text)); },
+            // The selection in the user's currency: { amount, base, target, rate, asOf }, or null
+            async converted(ctx, tools) {
+                const parsed = this.parsed(ctx), target = userCurrency();
+                const found = parsed && parsed.amount !== null && parsed.base !== target && await tools.rate(parsed.base, target);
+                return found ? { ...parsed, target, ...found, value: (parsed.amount * found.rate).toFixed(2) } : null;
+            },
             // When the rate is from: today the time, else the day
             rateAge(at) {
                 const d = new Date(at), today = new Date().toDateString() === d.toDateString();
@@ -752,41 +673,19 @@
                 const parsed = this.parsed(ctx);
                 return parsed && parsed.base !== userCurrency();
             },
-            async dynamicLabel(ctx) {
-                const parsed = this.parsed(ctx);
-                if (!parsed || parsed.amount === null) return null;
-                const target = userCurrency();
-                if (parsed.base !== target) {
-                    const rate = await MathLib.fetchRate(parsed.base, target);
-                    if (rate) {
-                        const converted = (parsed.amount * rate).toFixed(2);
-                        const sym = Data.CURRENCY_SYMBOLS?.[target] || '';
-                        return `${sym}${converted} ${target}`;
-                    }
-                }
-                return null;
+            async dynamicLabel(ctx, tools) {
+                const c = await this.converted(ctx, tools);
+                return c ? `${Data.CURRENCY_SYMBOLS?.[c.target] || ''}${c.value} ${c.target}` : null;
             },
             // The rate it uses, and when it is from (rates are kept for a day)
             async info(ctx, tools) {
-                const parsed = this.parsed(ctx);
-                const target = userCurrency();
-                const found = parsed && parsed.base !== target && await tools.rate(parsed.base, target);
-                if (!found) return null;
-                return `1 ${parsed.base} = ${found.rate.toLocaleString(undefined, { maximumSignificantDigits: 5 })} ${target}` + (found.asOf ? ` · ${this.rateAge(found.asOf)}` : '');
+                const c = await this.converted(ctx, tools);
+                return c && `1 ${c.base} = ${c.rate.toLocaleString(undefined, { maximumSignificantDigits: 5 })} ${c.target}` + (c.asOf ? ` · ${this.rateAge(c.asOf)}` : '');
             },
-            execute: (ctx) => {
-                ctx.tools.open(buildUrl('https://www.google.com/search?q=%s+convert', ctx.text));
-                return { success: true };
-            },
+            url: (ctx) => buildUrl('https://www.google.com/search?q=%s+convert', ctx.text),
             async preview(ctx, tools) {
-                const parsed = this.parsed(ctx);
-                const target = userCurrency();
-                let label = '...';
-                if (parsed && parsed.amount !== null && parsed.base !== target) {
-                    const rate = await tools.fetchRate(parsed.base, target);
-                    if (rate) label = `${(parsed.amount * rate).toFixed(2)} ${target}`;
-                    else label = 'Unavailable';
-                }
+                const parsed = this.parsed(ctx), c = await this.converted(ctx, tools);
+                const label = c ? `${c.value} ${c.target}` : parsed && parsed.amount !== null && parsed.base !== userCurrency() ? 'Unavailable' : '...';
                 return tools.buildCopyMenu(label, label, 'Copy', [tools.convertPageItem()]);
             }
         },
@@ -795,26 +694,20 @@
             label: 'Unit',
             category: 'smart',
             icon: 'unit',
-            // "5 km": the conversion, or null
+            // A selection that is one measurement ("5 km", "5 км", "70 °F"): the conversion, or null
             parse(text) {
-                const match = text.trim().match(new RegExp(`^([\\d,.]+)\\s*°?(${MathLib.patterns().unitKeys})$`, 'i'));
-                if (!match) return null;
-                const val = MathLib.parseLocaleNumber(match[1]);   // "1,5 km" is 1.5 km
-                const conv = MathLib.convertUnit(val, match[2]);
-                if (!conv) return null;
-                return { val, unitKey: match[2].toLowerCase(), isMetric: conv.metric, result: `${conv.value.toFixed(2)} ${conv.target}` };
+                const t = text.trim(), [found] = MathLib.findAmounts(t);
+                const conv = found && found.unit && found.index === 0 && found.length === t.length && MathLib.convertUnit(found.value, found.unit);
+                return conv ? { val: found.value, unitKey: found.unit, isMetric: conv.metric, result: `${conv.value.toFixed(2)} ${conv.target}` } : null;
             },
             parsed(ctx) { return getParsed(ctx, 'unit', () => this.parse(ctx.cleanText)); },
             condition(ctx) {
                 const parsed = this.parsed(ctx);
                 if (!parsed) return false;
-                const userPreference = getStandards().units || 'metric';
+                const userPreference = setting('standards').units;
                 return userPreference === 'metric' ? !parsed.isMetric : parsed.isMetric;
             },
-            execute: (ctx) => {
-                ctx.tools.open(buildUrl('https://www.google.com/search?q=%s+conversion', ctx.cleanText));
-                return { success: true };
-            },
+            url: (ctx) => buildUrl('https://www.google.com/search?q=%s+conversion', ctx.cleanText),
             preview(ctx, tools) {
                 const parsed = this.parsed(ctx);
                 const result = parsed ? parsed.result : '...';
@@ -846,7 +739,7 @@
             },
             // "Thu, 31 Dec 2026 · in 96 days" (year only when it isn't this year)
             describeDate(date, hasTime) {
-                const lang = getStandards().language || undefined;
+                const lang = userLanguage();
                 const now = new Date();
                 const opts = { weekday: 'short', month: 'short', day: 'numeric' };
                 if (date.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
@@ -860,12 +753,7 @@
             // The date or time in the selection (the date library above)
             parsed(ctx) { return getParsed(ctx, 'reminder', () => parseDate(ctx.cleanText, ctx)); },
             condition(ctx) { return this.parsed(ctx) !== null; },
-            execute(ctx) {
-                const parsed = this.parsed(ctx);
-                if (!parsed) return { success: false, message: 'Not a valid date or time' };
-                ctx.tools.open(this.calendarUrl(parsed.target, parsed.hasTime));
-                return { success: true };
-            },
+            url(ctx) { const parsed = this.parsed(ctx); return parsed && this.calendarUrl(parsed.target, parsed.hasTime); },
             preview(ctx) {
                 const parsed = this.parsed(ctx);
                 if (!parsed) return null;
@@ -884,26 +772,17 @@
             label: 'Format JSON',
             category: 'smart',
             icon: 'code',
-            condition: (ctx) => {
-                const t = ctx.cleanText;
-                if (t.length < 2 || (!t.startsWith('{') && !t.startsWith('['))) return false;
-                try { JSON.parse(t); return true; } catch(e) { return false; }
+            // The selection as JSON (an object or array), or null
+            json: (ctx) => getParsed(ctx, 'json', () => { const t = ctx.cleanText; if (t.length < 2 || !/^[{[]/.test(t)) return null; try { return JSON.parse(t); } catch (e) { return null; } }),
+            condition(ctx) { return this.json(ctx) !== null; },
+            execute(ctx, tools) {
+                const pretty = JSON.stringify(this.json(ctx), null, 2);
+                if (ctx.isInput) tools.replace(pretty); else tools.copy(pretty);
+                return { success: true, message: 'JSON formatted' };
             },
-            execute: (ctx, tools) => {
-                try {
-                    const obj = JSON.parse(ctx.cleanText);
-                    const pretty = JSON.stringify(obj, null, 2);
-                    if (ctx.isInput) tools.replace(pretty);
-                    else tools.copy(pretty);
-                    return { success: true, message: 'JSON formatted' };
-                } catch(e) { return { success: false }; }
-            },
-            preview: (ctx) => {
-                try {
-                    const obj = JSON.parse(ctx.cleanText);
-                    const keys = Object.keys(obj).length;
-                    return { previewText: `Valid JSON (${Array.isArray(obj) ? obj.length + ' items' : keys + ' keys'})` };
-                } catch(e) { return null; }
+            preview(ctx) {
+                const obj = this.json(ctx);
+                return { previewText: `Valid JSON (${Array.isArray(obj) ? obj.length + ' items' : Object.keys(obj).length + ' keys'})` };
             }
         },
         {
@@ -911,27 +790,18 @@
             label: 'Decode',
             category: 'smart',
             icon: 'lock',
-            condition: (ctx) => {
+            // The decoded text, only if it is readable (plain words like "Unix" decode to byte garbage), or null
+            decoded: (ctx) => getParsed(ctx, 'base64', () => {
                 const t = ctx.cleanText;
-                if (t.length < 4 || t.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(t)) return false;
-                // Only if it decodes to readable text: plain words like "Unix" decode to byte garbage
-                try { return !/[\x00-\x08\x0E-\x1F]/.test(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(t), c => c.charCodeAt(0)))); } catch(e) { return false; }
+                if (t.length < 4 || t.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(t)) return null;
+                try { const raw = atob(t); return /[\x00-\x08\x0E-\x1F]/.test(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(raw, c => c.charCodeAt(0)))) ? null : raw; } catch (e) { return null; }
+            }),
+            condition(ctx) { return this.decoded(ctx) !== null; },
+            execute(ctx, tools) {
+                if (ctx.isInput) tools.replace(this.decoded(ctx)); else tools.copy(this.decoded(ctx));
+                return { success: true, message: 'Base64 decoded' };
             },
-            execute: (ctx, tools) => {
-                try {
-                    const decoded = atob(ctx.cleanText);
-                    if (ctx.isInput) tools.replace(decoded);
-                    else tools.copy(decoded);
-                    return { success: true, message: 'Base64 decoded' };
-                } catch(e) { return { success: false }; }
-            },
-            preview: (ctx, tools) => {
-                try {
-                    const decoded = atob(ctx.cleanText);
-                    const safe = Utils.shorten(decoded, 20);
-                    return tools.buildCopyMenu(decoded, `"${safe}"`);
-                } catch(e) { return null; }
-            }
+            preview(ctx, tools) { return tools.buildCopyMenu(this.decoded(ctx), `"${Utils.shorten(this.decoded(ctx), 20)}"`); }
         },
         {
             id: 'color_convert',

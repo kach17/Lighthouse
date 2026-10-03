@@ -19,8 +19,8 @@
     const AUTO_CLOSE = Object.fromEntries(['(', '[', '{'].map(k => [k, WRAP_PAIRS[k]]));
     const CLOSERS = new Set(Object.values(AUTO_CLOSE));
 
-    const tidySpacing = () => State.get('tidySpacing', true) !== false;
-    const bracketsMode = () => State.get('brackets', 'wrap');
+    const tidySpacing = () => State.get('tidySpacing');
+    const bracketsMode = () => State.get('brackets');
 
     // Remembers the closing bracket we inserted, so typing it steps over it and Backspace
     // inside an empty pair removes both. It stays "ours" while it sits right after the caret

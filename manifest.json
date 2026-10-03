@@ -53,6 +53,7 @@
         "src/modules/state.js",
         "src/modules/input.js",
         "src/modules/selection.js",
+        "src/modules/geometry.js",
         "src/modules/language.js",
         "src/modules/editing.js",
         "src/modules/api.js",
