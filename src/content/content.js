@@ -6,7 +6,7 @@
     const UI = window.LighthouseUI, SelLib = window.LighthouseSelection, State = window.LighthouseState;
     const Handles = window.LighthouseHandles, Input = window.LighthouseInput, $ = window.LighthouseUtils;
 
-    let linkHoverTimer = null, linkDestroyTimer = null, interactionTimer = null;
+    let linkHoverTimer = null, linkDestroyTimer = null, interactionTimer = null, selectionRun = 0;
     const close = () => State.send('close');
 
     function init() {
@@ -194,7 +194,12 @@
         }
         const pointer = reason === 'pointer' ? e : null;
         clearTimeout(interactionTimer);
+        const run = ++selectionRun;   // a later selection supersedes this one, also while it waits below
         interactionTimer = setTimeout(async () => {
+            // Lighthouse hears the mouseup first (capture), so this runs before the page's own follow-up to it.
+            // Editors that keep their own selection (ProseMirror: Claude, Tiptap) write it back to the page in a
+            // task queued from their mouseup, which would undo a snap made before it: wait one task behind it
+            if (pointer) { await new Promise(r => setTimeout(r, 0)); if (run !== selectionRun) return; }
             let ctx = SelLib.getContext(pointer);
             if (pointer && ctx.hasText && State.get('smartSnapping')) {
                 try { SelLib.performSnap(); ctx = SelLib.getContext(pointer); } catch (err) { /* text it can't snap: as selected */ }

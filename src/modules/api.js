@@ -125,6 +125,7 @@
 
     window.LighthouseAPI = {
         prepareContext,
-        getTools
+        getTools,
+        countWords   // the one word count: a selection's, and a field's in the strip
     };
 })();

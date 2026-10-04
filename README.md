@@ -19,6 +19,7 @@ Select text or click into a field and what you need is already there. Nothing mo
 - Paste (including everything you collected), Cut, Delete, Clear, Case
 - Spelling and grammar, in many languages
 - Wrap, saved phrases and details on demand
+- Character limits, where a field has one
 
 **The details**
 *The small frictions that usually go unnoticed*

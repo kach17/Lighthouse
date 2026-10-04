@@ -20,8 +20,8 @@
                 html: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' });
             button.addEventListener('mouseenter', () => clearTimeout(hideTimer));
             button.addEventListener('click', (e) => { e.stopPropagation(); if (hovered) remove(hovered); });
-            document.body.appendChild(button);
         }
+        if (!button.isConnected) document.body.appendChild(button);   // first use, or the page replaced its body
         const last = m.rects[m.rects.length - 1];
         if (!last) return;
         hovered = m;

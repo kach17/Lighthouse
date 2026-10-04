@@ -134,40 +134,42 @@
      * Defaults to navigator.language if no 'lang' attribute is found.
      */
     const WRAP_PAIRS = window.LighthouseData.WRAP_PAIRS;
-    const PUNCT_AFTER = /^[.,!?;:)\]}'">]/;
-    // word chars/closing brackets (original scope) + sentence punctuation — "Hello,world"
-    // is as wrong as "Helloworld", so a following word needs a space either way.
-    // (owned by WRAP_PAIRS/snapping) or dashes (people repeat those on purpose).
+    // Spacing follows the text's own convention, in any language: an edit removes a space only where it made one
+    // extra ("vrai !" keeps its space, "true!" has none). Marks by Unicode category, not one language's list
+    const CLOSING = /^(?:[\p{Pe}\p{Pf}]|(?![#%&*@\\/'"¡¿§¶·])\p{Po})$/u, OPENING = /^[\p{Ps}\p{Pi}¿¡]$/u;
     const DUPLICATE_PUNCT = /^[.,!?;:]$/;
     const isWord = (c) => /^[\p{L}\p{N}_]$/u.test(c || '') && !Data.UNSPACED_SCRIPTS.test(c);   // words that take spaces, any language
-    const needsSpaceAfter = (c) => isWord(c) || /^[)\]}'">.,!?;:]$/.test(c || '');
+    const isSpace = (c) => /^[^\S\r\n]$/.test(c || ''), isEdge = (c) => !c || c === '\n' || c === '\r';   // within a line; a line's start or end
+    // After a word or a closing mark, a word needs a space. A straight " closes after text (' is also the apostrophe: left alone)
+    const needsSpaceAfter = (str, i) => isWord(str[i]) || CLOSING.test(str[i] || '') || (str[i] === '"' && !isSpace(str[i - 1]) && !isEdge(str[i - 1]));
 
     function normalizeEdges(text, before, after) {
-        if (/^\s/.test(text) && /\s$/.test(before)) text = text.replace(/^\s+/, '');
-        if (/\s$/.test(text) && (/^\s/.test(after) || PUNCT_AFTER.test(after) || after === '')) text = text.replace(/\s+$/, '');
-        if (needsSpaceAfter(before) && isWord(text[0])) text = ' ' + text;
-        if (needsSpaceAfter(text.slice(-1)) && isWord(after) && !PUNCT_AFTER.test(after)) text += ' ';
+        const b = before.slice(-1), a = after[0];
+        if (isSpace(b)) text = text.replace(/^[^\S\r\n]+/, '');   // at a line's start, its indentation stays
+        if (isSpace(a) || isEdge(a) || CLOSING.test(a)) text = text.replace(/[^\S\r\n]+$/, '');
+        if (needsSpaceAfter(before, before.length - 1) && (isWord(text[0]) || OPENING.test(text[0] || ''))
+            && !(/^\p{N}/u.test(text) && /\p{N}[.,]$/u.test(before))) text = ' ' + text;   // but "1," + "5" is a number
+        if (needsSpaceAfter(text, text.length - 1) && isWord(a)) text += ' ';
         return text;
     }
 
-    // Deleting val[start, end) in a plain field: bounds widened so no stray space or doubled mark is
-    // left, and whether the caret belongs before the space that stays ("I want‸ noodles")
+    // Deleting val[start, end) in a plain field: only spaces the deletion made extra go (two meeting, one left at a
+    // line's edge, one between a mark and what was attached to it), and a mark it doubled. caretBack: whether the
+    // caret belongs before the space that stays ("I want‸ noodles")
     function planDeletion(val, start, end) {
-        const at = (i) => val[i] || '', after = at(end);
-        if (at(start - 1) === ' ' && (after === ' ' || after === '' || PUNCT_AFTER.test(after))) {
-            start -= 1;
-            if (after === ' ' && PUNCT_AFTER.test(at(end + 1))) end += 1;
-        } else if (start === 0 && after === ' ') end += 1;
-        if (DUPLICATE_PUNCT.test(at(start - 1)) && at(start - 1) === after) end += 1;
-        return { start, end, caretBack: at(start - 1) === ' ' && isWord(after) };
+        const at = (i) => val[i] || '', L = at(start - 1), R = at(end);
+        if (isSpace(L) && (isSpace(R) || isEdge(R) || CLOSING.test(R))) start -= 1;
+        else if (isSpace(R) && (isEdge(L) || OPENING.test(L))) end += 1;
+        if (DUPLICATE_PUNCT.test(at(start - 1)) && at(start - 1) === at(end)) end += 1;
+        return { start, end, caretBack: isSpace(at(start - 1)) && isWord(at(end)) };
     }
 
-    // Rich text, after a deletion: a caret between a space and a word goes to the previous word's end
+    // Rich text, after a deletion: a caret between a space and a word goes to the previous word's end (true if it moved)
     function caretToWordEnd(el) {
         const sel = getActiveSelection(), r = sel && sel.isCollapsed && sel.rangeCount && sel.getRangeAt(0);
         if (!r || !el.contains(r.startContainer)) return;
         const x = document.createRange(), side = (start) => { x.selectNodeContents(el); start ? x.setStart(r.startContainer, r.startOffset) : x.setEnd(r.startContainer, r.startOffset); return x.toString(); };
-        if (/[^\S\r\n]$/.test(side(false)) && isWord(side(true)[0])) sel.modify('move', 'backward', 'character');
+        return /[^\S\r\n]$/.test(side(false)) && isWord(side(true)[0]) && (sel.modify('move', 'backward', 'character'), true);
     }
 
     // Whether deleting the selection needs tidying; if not, the browser deletes as usual
@@ -414,7 +416,7 @@
                 return { before: all.slice(0, plan.start), text: '', after: all.slice(plan.end), caret: plan.caretBack ? -1 : 'end' };
             }
             const charBefore = all[start - 1] || '', charAfter = all[end] || '';
-            finalText = normalizeEdges(finalText, charBefore, charAfter);
+            finalText = normalizeEdges(finalText, all.slice(0, start), all.slice(end));
             // An exact duplicate mark is collapsed by consuming the existing neighbor
             if (DUPLICATE_PUNCT.test(charAfter) && finalText.slice(-1) === charAfter) end += 1;
             if (DUPLICATE_PUNCT.test(charBefore) && finalText[0] === charBefore) start -= 1;
@@ -562,6 +564,8 @@
         getActiveSelection,
         needsTidy,
         caretToWordEnd,
+        isWord,
+        needsSpaceAfter,
         getLinkContext,
         insertText,
         surface,

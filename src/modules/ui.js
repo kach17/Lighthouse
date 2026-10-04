@@ -11,7 +11,7 @@
     const POPOVER_CLASS = 'lighthouse-popover';
     
     // Persistent References
-    let shadowRoot = null;
+    let shadowRoot = null, host = null;
     let tooltipContainer = null;
     
     const destroyCallbacks = [];
@@ -116,10 +116,24 @@
         return facts;
     }
 
+    // A plain field's own fact, with a caret in it, read live from the field (so a keep-open refresh,
+    // Clear all, is current): its length against the limit it states, as the browser counts it
+    // (LighthouseInput.lengthLimit: "12/50 characters", the same form when over). Nothing where the
+    // field states no limit: never a guess.
+    function fieldFacts(ctx) {
+        const field = ctx.snapshot && ctx.snapshot.field;   // plain fields only (rich editors state no limit)
+        const limit = field && window.LighthouseInput.lengthLimit(field);
+        return limit ? [`${limit.length.toLocaleString()}/${limit.max.toLocaleString()} characters`] : [];
+    }
+
+    // What the strip says when no button is pointed at: the selection's facts, or with a caret in a
+    // field the field's (never both: two counts of different things would read as a contradiction)
+    const stripFacts = (ctx) => ctx.hasText ? selectionFacts(ctx) : fieldFacts(ctx);
+
     // first: the first button's label, said when there is no selection (what the bar offers first)
     function buildStrip(ctx, iconOnly, first) {
         clearStrip();
-        const facts = selectionFacts(ctx);
+        const facts = stripFacts(ctx);
         if (!facts.length && iconOnly && first) facts.push(first);
         tooltipContainer.dataset.strip = facts.length || iconOnly ? 'on' : 'off';
         if (tooltipContainer.dataset.strip === 'off') return;
@@ -211,8 +225,9 @@
     // --- INITIALIZATION ---
     // The bar lives in a closed shadow root: the page can't read what it shows (clipboard, collected snippets)
     function init() {
-        if (document.getElementById(HOST_ID)) return;
-        const host = $.create('div', { attrs: { id: HOST_ID }, style: 'display: none; position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;' });
+        if (host) return;
+        document.getElementById(HOST_ID)?.remove();   // left by an earlier copy (the extension reloaded): its closed root is unreachable
+        host = $.create('div', { attrs: { id: HOST_ID }, style: 'display: none; position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;' });
         document.documentElement.appendChild(host);
         shadowRoot = host.attachShadow({ mode: 'closed' });
         for (const path of ['src/content/tokens.css', 'src/content/styles.css']) shadowRoot.appendChild($.create('link', { attrs: { rel: 'stylesheet', href: chrome.runtime.getURL(path) } }));
@@ -235,8 +250,11 @@
     const live = new Proxy({}, { get: (_, k) => current[k], set: (_, k, v) => { current[k] = v; return true; }, has: (_, k) => k in current });
     const liveTools = new Proxy({}, { get: (_, k) => current.tools[k] });
     function render(State, { inPlace = false } = {}) {
-        if (!shadowRoot) init();
-        document.getElementById(HOST_ID).style.display = 'block';
+        if (!host) init();
+        // Pages that swap themselves in place (GitHub, Turbo) can remove what they didn't create: put it back.
+        // The closed shadow root stays with the element, so the bar returns exactly as it was
+        if (!host.isConnected) document.documentElement.appendChild(host);
+        host.style.display = 'block';
         const { settings, ctx, activeActions } = State;
         window.LighthouseInput.activate('bar');   // its keys listen only while it is open
 
@@ -250,7 +268,7 @@
         if (inPlace && ids === shown) {   // the same buttons: their labels worked out again, nothing rebuilt
             current = apiCtx;
             shownButtons.forEach(b => b._relabel && b._relabel());
-            if (strip) { strip.facts = selectionFacts(apiCtx); if (!strip.tool) show(strip.facts); }   // the selection's own facts
+            if (strip) { strip.facts = stripFacts(apiCtx); if (!strip.tool) show(strip.facts); }   // the selection's and the field's facts
             updatePosition(ctx, true);
             return afterRefresh();
         }
@@ -593,7 +611,7 @@
         updatePosition, 
         destroy, 
         onDestroy: (cb) => destroyCallbacks.push(cb),
-        contains: (t) => document.getElementById(HOST_ID)?.contains(t), 
+        contains: (t) => !!host && host.contains(t), 
         showToast, 
         get shadowRoot() { return shadowRoot; },
         get pressed() { return pressed; },

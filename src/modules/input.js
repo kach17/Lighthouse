@@ -85,6 +85,19 @@
 
     const isSensitive = (el) => SENSITIVE_AUTOCOMPLETE.test(el.getAttribute('autocomplete') || '');
 
+    // The fields the browser enforces maxlength on (the HTML spec: these input types and textarea)
+    const LENGTH_LIMIT_TYPES = ['text', 'search', 'url', 'tel', 'email'];
+
+    /**
+     * The length limit a field states and the browser enforces: { length, max }, or null when it states
+     * none. Counted as the browser counts it: UTF-16 code units of the value, so an emoji is 2 and a line
+     * break 1. Only what the field itself declares, never a guess.
+     */
+    function lengthLimit(el) {
+        if (!el || !(el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && LENGTH_LIMIT_TYPES.includes((el.type || 'text').toLowerCase())))) return null;
+        return el.maxLength >= 0 ? { length: el.value.length, max: el.maxLength } : null;
+    }
+
     /** A field whose caret and selection can be read and set. The browser answers: email and number can't. */
     const hasOffsets = (el) => !!el && typeof el.selectionStart === 'number';
 
@@ -238,6 +251,7 @@
         /** Re-evaluate listeners, e.g. after settings change (site switched on or off) */
         refresh: sync,
         fieldKind,
+        lengthLimit,
         hasOffsets,
         hasSelection,
         focusedElement

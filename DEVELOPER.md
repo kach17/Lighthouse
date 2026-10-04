@@ -133,6 +133,7 @@ Each exists once; use it rather than writing another.
 | Read a number (`1.234,5`, `1,234.5`) | `LighthouseMath.parseLocaleNumber()` |
 | Convert units and currencies | `LighthouseMath.convertUnit()`, `patterns()`, `convertAllText()` |
 | Is this a text field (and may we type in it) | `LighthouseInput.fieldKind(el, { forTyping })` |
+| A field's length limit (maxlength), as the browser counts it | `LighthouseInput.lengthLimit(el)`: `{ length, max }`, or null when it states none |
 
 Only `page.css` is injected into web pages; everything else is `styles.css` in the shadow root. Timings and spacing live in `tokens.css`.
 
@@ -162,6 +163,8 @@ Parsers in `actions.js` receive `(text, ctx)` and are read through `getParsed()`
 Always use `tools.replace(text, options)` inside an action. Never manipulate `el.value` directly.
 
 `tools.replace` calls `insertText` in `selection.js` which handles spacing, cursor placement, and undo in one place for both native inputs and contentEditable elements. Deleting and cutting are only intercepted when tidying is needed (`needsTidy()`); otherwise the browser's own edit runs, with its normal events.
+
+Spacing follows the text's own convention, not one language's rules: a deletion removes a space only where it made one extra, and marks are recognized by Unicode category. A space taken away is owed: a word typed next at that caret gets it back (`editing.js`).
 
 ---
 

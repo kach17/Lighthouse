@@ -73,18 +73,32 @@
     }
 
     // ---------- Text fields ----------
-    // Text fields expose no positions for their text, so an invisible copy laid over the field, with
-    // every one of its computed styles, is measured instead. One mirror while the bar or handles are up:
-    // built on first use, rebuilt if the field is swapped or resized, removed by release().
+    // Text fields expose no positions for their text, so an invisible copy laid over the field, styled
+    // like it, is measured instead. One mirror while the bar or handles are up: built on first use,
+    // rebuilt if the field is swapped or resized, removed by release().
+    // The styles that lay out text, copied first. Not every computed style: a textarea ignores some that
+    // a div obeys (reading styles such as text-wrap: pretty, on Gemini's message editing), and copying
+    // those breaks the lines elsewhere than the field does
+    const MIRROR_PROPS = ['boxSizing', 'width', 'height', 'overflowX', 'overflowY',
+        'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+        'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+        'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariant',
+        'fontVariantLigatures', 'fontVariantNumeric', 'fontFeatureSettings', 'fontVariationSettings',
+        'fontOpticalSizing', 'fontKerning', 'fontSynthesis', 'textRendering',
+        'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform', 'textAlign', 'direction',
+        'whiteSpace', 'overflowWrap', 'wordBreak', 'tabSize'];
     const MIRROR_FIXED = { position: 'fixed', right: 'auto', bottom: 'auto', margin: '0', transform: 'none',
         display: 'block', borderStyle: 'solid', borderColor: 'transparent', opacity: '0', visibility: 'visible',
         pointerEvents: 'none', zIndex: '2147483647', transition: 'none', animation: 'none' };
     const MARKER = '\u2060';   // zero-width and never a line-break opportunity, so markers can't change wrapping
+    // Fields the list doesn't cover (found by measuring once, below): those get every computed style
+    const needsFullCopy = new WeakMap();
     let mirror = null;   // { field, div, w, h, lineHeight, key, ends }
 
-    function copyStyles(field, div) {
+    function copyStyles(field, div, all) {
         const cs = window.getComputedStyle(field);
-        for (const p of cs) div.style.setProperty(p, cs.getPropertyValue(p));
+        if (all) for (const p of cs) div.style.setProperty(p, cs.getPropertyValue(p));
+        else MIRROR_PROPS.forEach(p => div.style[p] = cs[p]);
         if (field.tagName !== 'TEXTAREA') div.style.whiteSpace = 'pre';   // single-line fields never wrap
         Object.assign(div.style, MIRROR_FIXED);   // whatever was copied: fixed over the field, invisible, inert
     }
@@ -103,9 +117,17 @@
             release();
             const div = document.createElement('div');
             div.setAttribute('aria-hidden', 'true');
-            copyStyles(field, div);
+            copyStyles(field, div, needsFullCopy.get(field) === true);
             document.body.appendChild(div);
             mirror = { field, div, w: r.width, h: r.height, lineHeight: parseFloat(window.getComputedStyle(field).lineHeight) || 20, key: null, ends: null };
+            // Once per field: a mirror that wraps like the field is as tall as its content. If not, the
+            // list missed a style that matters here, and the field gets every computed style instead
+            if (field.tagName === 'TEXTAREA' && !needsFullCopy.has(field)) {
+                div.textContent = plainText(field.value);
+                const matches = Math.abs(div.scrollHeight - field.scrollHeight) <= 1;
+                needsFullCopy.set(field, !matches);
+                if (!matches) copyStyles(field, div, true);
+            }
         }
         mirror.div.style.top = r.top + 'px';
         mirror.div.style.left = r.left + 'px';
