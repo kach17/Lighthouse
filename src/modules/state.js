@@ -65,6 +65,7 @@
          *   (a released handle sends dragEnd, then its selection arrives as `selected`)
          */
         acting: false,
+        reading: null,   // the text being read aloud (Read aloud), whose bar comes back while it lasts
         _beforeDrag: 'HIDDEN',
         _idleTimer: null,
         _effects: { show: () => {}, hide: () => {} },
@@ -77,17 +78,27 @@
 
         send: function(event, data = {}) {
             const was = this.mode, fx = this._effects;
-            const hide = () => { this.mode = 'HIDDEN'; this.activeActions = []; fx.hide(); };
+            const hide = () => {
+                if (this.reading && this.mode === 'LINK' && this.ctx && this.ctx.reading) return;   // the reading bar stays while reading
+                fx.hide();
+                if (this.reading) { this.decide(this.reading); return fx.show(false); }   // another bar closed: back to it
+                this.mode = 'HIDDEN'; this.activeActions = [];
+            };
             switch (event) {
                 case 'selected':   // inPlace: the bar refreshed by its own keep-open action (allowed while acting)
                     if (this.busy && !data.inPlace) return;
+                    if (was === 'LINK' && !data.ctx.hasText && !data.ctx.isInput) return;   // a click elsewhere: link-type bars close by their own rules
                     this.decide(data.ctx);
-                    if (this.mode === 'HIDDEN') fx.hide(); else fx.show(data.ctx.hasText, data.inPlace);
+                    if (this.mode === 'HIDDEN') hide(); else fx.show(data.ctx.hasText, data.inPlace);
                     return;
-                case 'link':
-                    if (this.acting) return;
+                case 'reading':   // Read aloud: reading started (ctx) or ended; its bar shows when no other does
+                    this.reading = data.ctx || null;
+                    if (!this.reading && this.ctx && this.ctx.reading) hide();
+                    return;
+                case 'link':   // inPlace, as for selected: the bar refreshed by its own keep-open action
+                    if (this.acting && !data.inPlace) return;
                     this.decide(data.ctx);
-                    if (this.mode === 'LINK') fx.show(false);
+                    if (this.mode === 'LINK') fx.show(false, data.inPlace);
                     return;
                 case 'snippets':
                     this.ctx = data.ctx;
@@ -102,8 +113,8 @@
                     hide();
                     return;
                 case 'moved':   // scrolled or resized: the bar and handles follow, or go if what they were for is gone
-                    if (was === 'DRAGGING') return;   // the drag positions the handles itself
-                    if (was !== 'HIDDEN' && this._stillValid()) fx.place(this.ctx.hasText); else hide();
+                    if (was === 'DRAGGING' || was === 'HIDDEN') return;   // the drag positions the handles itself; hidden: nothing to follow
+                    if (this._stillValid()) fx.place(was !== 'LINK' && this.ctx.hasText); else hide();   // handles: a selection's only
                     return;
                 case 'edit':
                     if (was !== 'SNIPPET_MENU' && !this.acting) hide();
@@ -115,7 +126,7 @@
                     this._idleTimer = setTimeout(() => { this.lastFocusedInput = null; }, 3000);
                     return;
                 case 'selectionLost':
-                    if (this.acting || was === 'SNIPPET_MENU' || was === 'DRAGGING') return;
+                    if (this.acting || was === 'SNIPPET_MENU' || was === 'DRAGGING' || was === 'LINK') return;   // as above
                     if (data.inField && !(was !== 'HIDDEN' && this.ctx && this.ctx.hasText)) return;   // the caret bar stays
                     hide();
                     return;
@@ -148,7 +159,8 @@
             // Leaving fields: coming back to one is a first click again
             if (!rawCtx.isInput) this.lastFocusedInput = null;
 
-            if (rawCtx.isLink) return set('LINK', this._filterActions('link', apiCtx));
+            // A link, or something with buttons of its own (a converted value, a highlight, reading)
+            if (rawCtx.isLink) return set('LINK', rawCtx.buttons || this._filterActions('link', apiCtx));
             if (!rawCtx.hasText && !rawCtx.isInput) return set('HIDDEN', []);
 
             if (rawCtx.isInput) {

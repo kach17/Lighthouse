@@ -1,4 +1,3 @@
-// popup.js
 // Settings for Lighthouse. Uses the same stylesheets and components as the bar.
 (function() {
     const $ = window.LighthouseUtils;

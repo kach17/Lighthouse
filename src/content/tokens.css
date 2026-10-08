@@ -79,9 +79,9 @@
 
     /* ---------- INPUTS: motion ---------- */
     --so-duration: 200ms;        /* appearing */
-    --so-duration-out: 200ms;    /* disappearing: the old bar fades where it was while the new one rises */
+    --so-duration-out: 150ms;    /* disappearing, a little quicker than appearing: the old bar fades where it was */
     --so-reveal-distance: 100%;
-    --lh-hl-yellow: #fff176; --lh-hl-green: #b9f6ca; --lh-hl-blue: #b3e5fc; --lh-hl-pink: #f8bbd0; --lh-hl-orange: #ffcc80;   /* highlight colors */
+    --lh-hl-yellow: #fff176; --lh-hl-green: #b9f6ca; --lh-hl-blue: #b3e5fc; --lh-hl-pink: #f8bbd0; --lh-hl-orange: #ffcc80;   /* highlight colors (also written in page.css) */
     --so-popover-delay: 300ms;   /* hover before a popover opens */
     --so-popover-close-delay: 150ms;
     --so-bar-gap: 18px;          /* between the bar and the selection */  /* how far the bar travels as it rises out of the selection (of its own height) */

@@ -3,7 +3,7 @@
  * Handles context retrieval, smart snapping, and expansion logic.
  */
 (function() {
-    const Data = window.LighthouseData; // Import Data
+    const Data = window.LighthouseData;
 
     // "Is this a text field?" has one definition: LighthouseInput.fieldKind
     function isEditableElement(el) {
@@ -12,7 +12,6 @@
     }
     const segmenter = window.LighthouseUtils.segmenter('word');
     
-    // Use Data.js for snapping logic
     const PAIRS = Data.SNAPPING_PAIRS;
     const REVERSE_PAIRS = Data.REVERSE_SNAPPING_PAIRS;
 
@@ -123,6 +122,7 @@
         return {
             isLink: true,
             url: link.href,
+            facts: () => [link.href],   // the strip: the full address
             text: link.textContent.trim(),
             element: link,
             hasText: true // To pass generic checks if needed
@@ -169,7 +169,9 @@
         const sel = getActiveSelection(), r = sel && sel.isCollapsed && sel.rangeCount && sel.getRangeAt(0);
         if (!r || !el.contains(r.startContainer)) return;
         const x = document.createRange(), side = (start) => { x.selectNodeContents(el); start ? x.setStart(r.startContainer, r.startOffset) : x.setEnd(r.startContainer, r.startOffset); return x.toString(); };
-        return /[^\S\r\n]$/.test(side(false)) && isWord(side(true)[0]) && (sel.modify('move', 'backward', 'character'), true);
+        if (!/[^\S\r\n]$/.test(side(false)) || !isWord(side(true)[0])) return;
+        sel.modify('move', 'backward', 'character');
+        owe(el);
     }
 
     // Whether deleting the selection needs tidying; if not, the browser deletes as usual
@@ -391,10 +393,11 @@
     // Typing-style insertion over the selection (or over options.span, selected first): edges spaced,
     // marks not doubled, brackets wrapped, and in plain fields a deletion tidied. One rule for every surface.
     function insertText(target, text, options = {}) {
-        const s = surface(target && target.nodeType ? target : target.element);
+        const el = target && target.nodeType ? target : target.element, s = surface(el);
         if (!s || !s.writable || (options.span && !s.select(options.span))) return;
         if (!s.precise) { s.rewrite(null, () => ({ text })); return; }
 
+        let tidied = false;   // a deletion that took a space away: the next keystroke may owe it back
         s.rewrite({ before: 2, after: 2 }, ({ before, text: selected, after }) => {
             const all = before + selected + after;
             let start = before.length, end = start + selected.length;
@@ -413,6 +416,7 @@
             if (!finalText) {
                 if (!s.tidies) return { text: '' };
                 const plan = planDeletion(all, start, end);
+                tidied = plan.start !== start || plan.end !== end || plan.caretBack;
                 return { before: all.slice(0, plan.start), text: '', after: all.slice(plan.end), caret: plan.caretBack ? -1 : 'end' };
             }
             const charBefore = all[start - 1] || '', charAfter = all[end] || '';
@@ -427,6 +431,24 @@
             if (options.select) caret = 'select';
             return { before: all.slice(0, start), text: finalText, after: all.slice(end), caret };
         });
+        if (tidied) owe(el);
+        else if (!text && !s.tidies) caretToWordEnd(el);
+    }
+
+    // The owed space: when a deletion takes a space away, a word typed next at that caret gets it back first
+    // ("I want‸ noodles" + "small"), and after it too where a word follows ("‸noodles"). Recorded here, where every
+    // deletion goes (keys, the bar's Cut and Delete); any keystroke ends it (payOwed, from editing.js)
+    let owed = null;   // { el, before, after, at }
+    const spot = (el) => { const r = surface(el).read({ before: 20, after: 20 }); return r && !r.text ? r : null; };
+    function owe(el) {
+        const r = spot(el), before = !!r && needsSpaceAfter(r.before, r.before.length - 1), after = !!r && isWord(r.after[0]);
+        owed = before || after ? { el, before, after, at: r.before + '|' + r.after } : null;
+    }
+    function payOwed(el, e) {
+        const o = owed, r = o && spot(el);
+        owed = null;
+        if (!r || o.el !== el || r.before + '|' + r.after !== o.at || e.ctrlKey || e.metaKey || e.altKey || !isWord(e.key)) return;
+        surface(el).rewrite(null, () => ({ text: (o.before ? ' ' : '') + (o.after ? ' ' : '') }), { caret: o.after ? -1 : 'end' });
     }
 
     // Expand: page and rich text grow to the enclosing element; a plain field has no elements,
@@ -564,8 +586,7 @@
         getActiveSelection,
         needsTidy,
         caretToWordEnd,
-        isWord,
-        needsSpaceAfter,
+        payOwed,
         getLinkContext,
         insertText,
         surface,

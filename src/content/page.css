@@ -1,19 +1,12 @@
-/* Lighthouse · page-level styles
-   The only styles injected into web pages themselves: highlights, their delete button,
-   scrollbar hints and converted values. Everything else lives in the tooltip's shadow root
-   (styles.css). Tokens come from tokens.css. */
+/* Lighthouse · the only styles in web pages: they mark the page's own text (highlight paint, converted
+   values). Self-contained, so none of Lighthouse's tokens enter the page; the highlight colors are the
+   --lh-hl-* in tokens.css, written here too. */
 
-::highlight(lighthouse-yellow) { background-color: var(--lh-hl-yellow); color: #111; }
-::highlight(lighthouse-green) { background-color: var(--lh-hl-green); color: #111; }
-::highlight(lighthouse-blue) { background-color: var(--lh-hl-blue); color: #111; }
-::highlight(lighthouse-pink) { background-color: var(--lh-hl-pink); color: #111; }
-::highlight(lighthouse-orange) { background-color: var(--lh-hl-orange); color: #111; }
-.marker-scrollbar-hint { position: fixed; right: 1px; z-index: 2147483646 !important; width: 15px !important; opacity: 0.55; outline: 1px solid var(--so-edge); cursor: pointer; transition: width 200ms ease;}
-.marker-scrollbar-hint:hover { opacity: 1; }
-.marker-scrollbar-hint .marker-scrollbar-tooltip { position: absolute; bottom: 0; right: 120%; z-index: 2147483647 !important; width: max-content !important; padding: var(--so-space-4) var(--so-space-5) !important; visibility: hidden; opacity: 0; background: var(--so-surface) !important; color: var(--so-ink) !important; box-shadow: var(--so-shadow); border-radius: var(--so-radius); font: 400 calc(var(--so-font-size) - 1px)/1.4 var(--so-font-family) !important; text-align: start !important; pointer-events: none !important; transition: opacity 250ms, visibility 250ms !important; }
-.marker-scrollbar-hint .marker-scrollbar-tooltip.marker-scrollbar-tooltip-bottom { bottom: unset !important; top: 0 !important; }
-.marker-scrollbar-hint:hover .marker-scrollbar-tooltip { visibility: visible; opacity: 1; transition-delay: 100ms; }
-.marker-highlight-delete-floating { position: absolute; z-index: 2147483647 !important; width: var(--so-btn-height); height: var(--so-btn-height); display: flex; align-items: center; justify-content: center; border-radius: var(--so-btn-radius); font: var(--so-font); background: var(--so-surface); color: var(--so-ink-sub); box-shadow: var(--so-shadow); cursor: pointer; user-select: none; transition: background-color var(--so-duration) var(--so-ease), color var(--so-duration) var(--so-ease); }
-.marker-highlight-delete-floating:hover { background: var(--so-hover-0); color: var(--so-ink); }
-
-.lighthouse-converted, .lighthouse-converted-price { border-bottom: 1px dashed var(--so-accent); cursor: help; }
+::highlight(lighthouse-yellow) { background-color: #fff176; color: #111; }
+::highlight(lighthouse-green) { background-color: #b9f6ca; color: #111; }
+::highlight(lighthouse-blue) { background-color: #b3e5fc; color: #111; }
+::highlight(lighthouse-pink) { background-color: #f8bbd0; color: #111; }
+::highlight(lighthouse-orange) { background-color: #ffcc80; color: #111; }
+::highlight(lighthouse-reading) { background-color: rgb(179 229 252 / 0.5); }   /* Read aloud: the text, */
+::highlight(lighthouse-sentence) { background-color: #b3e5fc; color: #111; }         /* the sentence being read */
+.lighthouse-converted, .lighthouse-converted-price { border-bottom: 1px dashed color-mix(in srgb, currentColor 60%, transparent); cursor: help; }

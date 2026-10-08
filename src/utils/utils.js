@@ -246,7 +246,7 @@
         return (granularity = 'word') => made[granularity] || (made[granularity] = new Intl.Segmenter(undefined, { granularity }));
     })(),
 
-    /** A design token as a number (px or ms), read from the tooltip's root or the page */
+    /** A design token as a number (px or ms), read from the bar's root (tokens never enter the page) */
     token: (name, fallback = 0) => {
         const host = (window.LighthouseUI && window.LighthouseUI.shadowRoot && window.LighthouseUI.shadowRoot.host) || document.documentElement;
         if (!tokenStyle) { tokenStyle = getComputedStyle(host); requestAnimationFrame(() => { tokenStyle = null; }); }   // one style lookup per frame

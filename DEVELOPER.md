@@ -29,32 +29,39 @@ Each step is isolated. `state.js` doesn't touch the DOM. `ui.js` doesn't know ab
 
 ```
 src/
-├── content/content.js       Entry point. Event listeners, lifecycle.
+├── background/
+│   ├── background.js        Services (the only network access), settings migration.
+│   └── qr.js                QR codes, made locally.
+├── content/
+│   ├── content.js           Entry point: connects input to the pipeline and the state machine.
+│   ├── styles.css           Everything in the shadow root. tokens.css: the design tokens.
+│   └── page.css             The only styles in pages: highlight paint, converted values.
 ├── modules/
 │   ├── actions.js           Every action: condition, execute, preview. Parsers (currency, units, dates...).
 │   ├── api.js               Context (prepareContext) and tools; external calls: translate, define, rates.
-│   ├── editing.js           Editing helpers for text fields (wrapping, brackets).
+│   ├── editing.js           Editing helpers for text fields: wrapping, brackets, tidy spacing, the owed space.
 │   ├── geometry.js          Where a selection is drawn: page extents, the text-field mirror, selection edges.
 │   ├── handles.js           Drag handles for adjusting selections.
-│   ├── input.js             Text field detection and behaviour.
+│   ├── input.js             The only place listening to input; what counts as a text field.
 │   ├── language.js          On-device language checks: is a selection foreign, page and user languages.
 │   ├── markers.js           Highlights, painted by the browser (CSS Custom Highlight API); the page is never changed.
 │   ├── math.js              Expression parsing and calculation.
 │   ├── selection.js         Context detection, text insertion, snapping.
 │   ├── state.js             Mode state machine, action filtering.
 │   └── ui.js                Shadow DOM tooltip rendering.
+├── offscreen/               Reads the clipboard for the extension (never the page).
 ├── popup/popup.js           Settings UI.
 └── utils/
     ├── config.js            Every setting, declared once (default, options); validation.
     ├── data.js              Currencies, units, icons.
-    └── utils.js             EventManager, Logger, shared helpers.
+    └── utils.js             Shared helpers: elements, messaging, segmenters, tokens, frames.
 ```
 
 ---
 
 ## State modes
 
-The bar's state machine lives in `state.js`. Every change is a named event, `State.send(event, data)`; nothing else writes the mode, the field memory (`lastFocusedInput`) or the busy flags. The table of events and the transitions they make is at the top of `send`. `state.js` touches no DOM: `content.js` connects two effects, `show` and `hide`.
+The bar's state machine is in `state.js`: every change is a named event, `State.send(event, data)`, and the table of events and transitions is at the top of `send`.
 
 | Mode | When |
 |---|---|
@@ -62,7 +69,7 @@ The bar's state machine lives in `state.js`. Every change is a named event, `Sta
 | `SELECTION` | Text selected on a page |
 | `SMART` | Text selected and a parser matched (math, currency, date, color, JSON, base64) |
 | `INPUT` | A field: text selected in it, or the first click into it |
-| `LINK` | Hovering an external link |
+| `LINK` | A bar for something on the page: an external link pointed at; a value Convert page changed (what it was, Undo all); a highlight pointed at (Clear highlight); the text being read aloud (Pause, Speed, Stop: while reading, this bar returns whenever no other is shown). A context with `buttons` gets those. Selection changes never close it |
 | `SNIPPET_MENU` | User typed `//` and matching shortcuts exist |
 | `DRAGGING` | A handle is being dragged: no bar; the drag owns the selection |
 
@@ -122,6 +129,8 @@ Each exists once; use it rather than writing another.
 | Where the selection is drawn | `LighthouseSelection.current().edges('painted')` (handles, the bar) or `edges('content')` (Highlight); `LighthouseGeometry` underneath |
 | The selection's language | `ctx.language` / `ctx.foreign` (from `LighthouseLanguage.inspect()`) |
 | Copy to the clipboard | `tools.copy()` |
+| Put a result where it belongs: replacing the selection in a field, copied on the page | `tools.place(value)` |
+| Make a range on the page open the bar when pointed at | `LighthouseContent.point.add(range, context)` / `.remove(range)` (`content.js`, as highlights do); elements are found by the `HOVERED` selector there |
 | Prices and measurements in a text | `LighthouseMath.findAmounts(text)`: words from the browser (Intl) in the reader's and the page's languages |
 | A language tag's base language | `LighthouseData.baseLanguage(code)` ('de-AT' -> 'de'), everywhere, the background included |
 | The focused element | `LighthouseInput.focusedElement()`: also inside web components |
@@ -150,9 +159,9 @@ Two questions, two snapshots. *Where is the selection now* (handles, positioning
 
 ## Network
 
-All requests go through `gatewayFetch` in `background.js`, without cookies or referrer, only to the manifest's `host_permissions`; only LanguageTool may receive a POST body. Define reads English Wiktionary (the only edition with a definition endpoint) and translates the entry for readers without English. Spelling sends the selection and its sentence (at most 500 characters). Link icons come from Chrome's favicon cache.
+All requests go through `gatewayFetch` in `background.js`, without cookies or referrer, only to the manifest's `host_permissions` (any site only for opt-in link previews, once the user grants it); only LanguageTool may receive a POST body. QR codes are made in the background (`qr.js`): nothing is sent. Define reads English Wiktionary (the only edition with a definition endpoint) and translates the entry for readers without English. Spelling sends the selection and its sentence (at most 500 characters). Link icons come from Chrome's favicon cache.
 
-`_favicon` is never web-accessible: any site could then read Chrome's favicon cache, and so which sites you've visited. Link icons in web pages come from the background (`FAVICON`) instead. The clipboard is read by the extension, never the page: `tools.readClipboard()` asks the background, which reads it in a hidden offscreen page (`src/offscreen/`). Read in the page, Chrome would prompt on every site and an allowed site would get the clipboard. Collected snippets are in `chrome.storage.session` (memory only). Previews showing changing data (clipboard, collection) return `live: true` so they aren't cached.
+`_favicon` is never web-accessible: any site could then read Chrome's favicon cache, and so which sites you've visited. Link icons in web pages come from the background (`FAVICON`) instead. The clipboard is read by the extension, never the page: `tools.readClipboard()` asks the background, which reads it in a hidden offscreen page (`src/offscreen/`). Read in the page, Chrome would prompt on every site and an allowed site would get the clipboard. Collected snippets are in `chrome.storage.session` (memory only), which only the extension can read: content scripts reach them through the `COLLECTION` service. Previews showing changing data (clipboard, collection) return `live: true` so they aren't cached.
 
 ## Parsers
 
@@ -164,17 +173,7 @@ Always use `tools.replace(text, options)` inside an action. Never manipulate `el
 
 `tools.replace` calls `insertText` in `selection.js` which handles spacing, cursor placement, and undo in one place for both native inputs and contentEditable elements. Deleting and cutting are only intercepted when tidying is needed (`needsTidy()`); otherwise the browser's own edit runs, with its normal events.
 
-Spacing follows the text's own convention, not one language's rules: a deletion removes a space only where it made one extra, and marks are recognized by Unicode category. A space taken away is owed: a word typed next at that caret gets it back (`editing.js`).
-
----
-
-## isEditableElement
-
-```js
-const { isForm, isEditable } = window.LighthouseSelection.isEditableElement(el);
-```
-
-Use this whenever you need to check if an element accepts text input. It correctly excludes password fields, buttons, and other non-text inputs that a raw `tagName === 'INPUT'` check would miss.
+Spacing follows the text's own convention, not one language's rules: a deletion removes a space only where it made one extra, and marks are recognized by Unicode category. A space taken away is owed: a word typed next at that caret gets it back. It's recorded in `insertText`, where every deletion goes (keys, the bar's Cut and Delete), and paid on the next keystroke (`editing.js`).
 
 ---
 
@@ -184,18 +183,16 @@ The bar sits at whole pixels, centered on the selection on the edge nearer the p
 
 ## Shadow DOM
 
-The tooltip renders inside a Shadow Root. The page can't break its styles and it can't leak onto the page. When writing UI code, use the existing CSS variables (`var(--so-text-color)` etc.) - they're defined inside the shadow root, not on `:root`.
+The bar, its handles and the highlights' button and hints render in a closed shadow root: the page can't break their styles or read what they show. Use the tokens from `tokens.css` (`var(--so-ink)`, `var(--so-surface)`, ...); in the shadow root they come with the user's theme.
 
 ---
 
 ## Tests
 
-`tests/` holds logic tests and browser tests that load the real extension into Chromium; see `tests/README.md`. Run `npm test` there before and after a change, and add a test with every bug fix.
+`tests/` (local, not in the repository) holds logic tests and browser tests that load the real extension into Chromium; see `tests/README.md`. Run `npm test` there before and after a change, and add a test with every bug fix.
 
 ## Debugging
 
-**Page console (F12)**  state transitions log as `[Lighthouse] ...`
+**Content scripts:** in the page's console (F12), choose Lighthouse in the context menu at the top (it says "top" by default); then `LighthouseState`, `LighthouseSelection.current()` and the rest can be read.
 
-**Background script** - `chrome://extensions` → Lighthouse → service worker. API errors show up here.
-
-**Inspecting state** - `window.LighthouseState` is accessible from the page console.
+**Background:** `chrome://extensions` → Lighthouse → service worker. Service errors show up here.

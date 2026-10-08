@@ -101,12 +101,13 @@
             },
 
             copy,
+            place(value) { if (ctx.isInput) this.replace(value); else copy(value); },   // a result: replacing the selection in a field, copied on the page
             copySelection: () => document.execCommand('copy'),   // keeps formatting
             open: (url) => window.open(url, '_blank'),
-            // Collect and Paste (session storage)
+            // Collect and Paste: kept by the background (session storage, which pages can't reach)
             collection: {
-                get: async () => { try { return (await chrome.storage.session.get('copyStack')).copyStack || []; } catch (e) { return []; } },
-                set: (items) => chrome.storage.session.set({ copyStack: items }).catch(() => {}),
+                get: async () => { const res = await $.message('COLLECTION'); return (res && res.success && res.items) || []; },
+                set: (items) => $.message('COLLECTION', { items }),
                 // The one menu item that empties it (Collect, Paste)
                 clearItem() { return { label: 'Clear collection', icon: 'clear', onClick: async () => { await this.set([]); toast('Collection cleared'); } }; }
             },
@@ -125,7 +126,6 @@
 
     window.LighthouseAPI = {
         prepareContext,
-        getTools,
-        countWords   // the one word count: a selection's, and a field's in the strip
+        getTools
     };
 })();

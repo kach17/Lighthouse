@@ -48,7 +48,7 @@
   &:is(.mode-bottom, .mode-sticky-top):not(.visible) { transform: translateY(calc(-1 * var(--so-reveal-distance))); }
 
   /* The quoted selection only shows when the bar is pinned to an edge */
-  &:is(.mode-top, .mode-bottom) > .lighthouse-preview { display: none; }
+  &:is(.mode-top, .mode-bottom) > .lighthouse-preview:not(.is-value) { display: none; }   /* a value always shows */
 }
 
 /* A bar that is leaving: a snapshot fades out where it was, while the real bar rises in
@@ -409,3 +409,10 @@ textarea.lh-field { height: auto; padding: var(--so-space-4) var(--so-space-5); 
   #lighthouse-extension-tooltip, .lighthouse-popover, .lighthouse-toast { transition-property: opacity !important; animation: none !important; }
   :is(.lighthouse-preview, .lighthouse-btn):hover .lighthouse-scroll-text { animation: none; }
 }
+/* Highlights' scrollbar hints (markers.js): in the shadow root, so out of the page's content and out of
+   its reach (no !important needed: page styles can't get here) */
+.marker-scrollbar-hint { position: fixed; right: 1px; width: 15px; opacity: 0.55; outline: 1px solid var(--so-edge); cursor: pointer; pointer-events: auto; transition: width 200ms ease; }
+.marker-scrollbar-hint:hover { opacity: 1; }
+.marker-scrollbar-tooltip { position: absolute; bottom: 0; right: 120%; width: max-content; padding: var(--so-space-4) var(--so-space-5); visibility: hidden; opacity: 0; background: var(--so-surface); color: var(--so-ink); box-shadow: var(--so-shadow); border-radius: var(--so-radius); font: 400 calc(var(--so-font-size) - 1px)/1.4 var(--so-font-family); text-align: start; pointer-events: none; transition: opacity 250ms, visibility 250ms; }
+.marker-scrollbar-tooltip.marker-scrollbar-tooltip-bottom { bottom: unset; top: 0; }
+.marker-scrollbar-hint:hover .marker-scrollbar-tooltip { visibility: visible; opacity: 1; transition-delay: 100ms; }

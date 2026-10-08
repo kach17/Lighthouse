@@ -4,7 +4,7 @@
  */
 
 // The actions and the settings declared in config.js (for keeping stored settings current)
-importScripts('../modules/math.js', '../utils/data.js', '../modules/actions.js', '../utils/config.js');
+importScripts('../modules/math.js', '../utils/data.js', '../modules/actions.js', '../utils/config.js', 'qr.js');
 
 // Stored settings after an install or update. Only what needs fixing is written, so a default stays a
 // default (a later version can improve it): invalid or unknown values are removed, so their defaults apply
@@ -30,9 +30,9 @@ const ALLOWED_SERVICES = (chrome.runtime.getManifest().host_permissions || []).m
     const host = p.replace(/^https:\/\//, '').replace(/\/.*$/, '');
     return host.startsWith('*.') ? new RegExp('(^|\\.)' + host.slice(2).replace(/\./g, '\\.') + '$') : host;
 });
-// Collected snippets live in session storage (memory only, cleared when the browser closes)
-chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
-chrome.runtime.onStartup.addListener(() => {});   // wakes the worker at browser start, so the line above runs
+// Session storage (memory only, cleared when the browser closes) is the extension's own: pages' content
+// scripts can't read it. Collected snippets reach them through COLLECTION, the favicon cache not at all
+chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
 
 // The only service that receives text in a request body (LanguageTool accepts POST only)
 const POST_SERVICES = ['api.languagetool.org'];
@@ -148,6 +148,10 @@ const SERVICES = {
     SPELLCHECK: (r) => spellcheck(r.text, r.language),
     WIKI_SUMMARY: (r) => wikiSummary(r.lang, r.title),
     LINK_PREVIEW: (r, sender) => linkPreview(r.url, sender.tab && sender.tab.url),
+    QR: async (r) => ({ result: await qrImage(r.text) }),
+    // Collect and Paste: the collection, read, or replaced when items are given
+    COLLECTION: async (r) => Array.isArray(r.items) ? (await chrome.storage.session.set({ copyStack: r.items }), {})
+        : { items: (await chrome.storage.session.get('copyStack')).copyStack || [] },
     AMOUNT_WORDS: (r) => amountWords(r.langs)
 };
 
@@ -178,6 +182,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function wikiSummary(lang, title) {
     if (!/^[a-z]{2,3}(-[a-z]+)?$/i.test(lang || '') || !title) throw new Error('Invalid request');
     return { result: JSON.parse(await gatewayFetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`)) };
+}
+
+// A QR code as a PNG, made here (qr.js): the text never leaves the browser. Whole pixels per module, about
+// 300 px across (sharp at twice the preview's size), with one module of margin (the preview adds its own)
+async function qrImage(text) {
+    const rows = qr(text);
+    if (!rows) throw new Error('Too long for a QR code');
+    const scale = Math.max(2, Math.round(300 / (rows.length + 2))), side = (rows.length + 2) * scale;
+    const canvas = new OffscreenCanvas(side, side), g = canvas.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, side, side); g.fillStyle = '#000';
+    rows.forEach((row, y) => row.forEach((on, x) => { if (on) g.fillRect((x + 1) * scale, (y + 1) * scale, scale, scale); }));
+    return blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }));
 }
 
 // Link preview (opt-in): fetches the hovered page itself, only its <head>, without cookies.

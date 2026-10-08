@@ -1,5 +1,5 @@
 /**
- * Lighthouse - Master Action Definitions (REFACTORED)
+ * Lighthouse - Action Definitions
  * Classified into: 'selection', 'input', 'smart', 'link'
  */
 (function(global) {
@@ -269,6 +269,17 @@
     };
 
     // --- STANDARD ACTION DEFINITIONS ---
+    let reading = null;   // reading aloud in progress (Read aloud)
+    const RATES = [0.75, 1, 1.25, 1.5];
+    // The reading bar's buttons: Pause (pressed while paused), Speed (a click: the next one; its menu: all of them), Stop
+    const READING_BUTTONS = [
+        { id: 'reading-pause', label: 'Pause', icon: 'pause', keepOpen: true, isActive: () => !!reading && reading.paused, execute: () => { reading.toggle(); return { success: true }; } },
+        { id: 'reading-speed', label: 'Speed', icon: 'speed', keepOpen: true, info: () => reading && `Reads at ${reading.rate}\u00d7`,
+            execute: () => { reading.setRate(RATES[(RATES.indexOf(reading.rate) + 1) % RATES.length]); return { success: true }; },
+            preview: () => reading && { live: true, items: RATES.map(r => ({ label: `${r}\u00d7`, textOnly: true, current: r === reading.rate, info: `Reads at ${r}\u00d7`, keepOpen: true, onClick: () => reading.setRate(r) })) } },
+        { id: 'reading-stop', label: 'Stop', icon: 'stop', execute: () => { if (reading) reading.stop(); return { success: true, message: 'Stopped reading' }; } }
+    ];
+
     const ACTIONS = [
         // --- SELECTION ACTIONS ---
         {
@@ -409,8 +420,6 @@
             // Shown only when the browser has a voice for the text's language (the voices installed, as
             // speechSynthesis lists them), so text is never read by a voice of another language, or not at all
             condition(ctx) { return ctx.hasText && !!this.voice(ctx); },
-            keepOpen: true,
-            isActive: () => window.speechSynthesis.speaking,
             lang: (ctx) => ctx.language || userLanguage(),
             // The voice: the reader's own variant of the language (fr-CA), else the language's most likely one
             // (Mandarin for zh, not Cantonese), else the browser's default for it
@@ -424,18 +433,38 @@
                     || voices.find(v => v.default) || voices[0] || null;
             },
             info(ctx) { const name = Utils.languageName(this.lang(ctx)); return name ? `Reads in ${name}` : null; },
-            execute(ctx) {   // the button follows the speech itself
-                const announce = () => window.dispatchEvent(new CustomEvent('lighthouse:state'));
-                if (window.speechSynthesis.speaking) {
-                    window.speechSynthesis.cancel();
-                    announce();
-                    return { success: true, message: 'Stopped reading' };
-                }
-                const u = new SpeechSynthesisUtterance(ctx.text), voice = this.voice(ctx);
-                u.voice = voice;
-                u.lang = voice.lang;
-                u.onstart = u.onend = u.onerror = announce;
-                window.speechSynthesis.speak(u);
+            // Sentence by sentence: a new speed starts at once, and long text isn't cut off. The text is tinted, the
+            // sentence being read more strongly (found by the characters that aren't spaces, which the selection's
+            // text and the page's share; where they differ, no sentence is painted). Pausing stops the sentence;
+            // resuming reads it again. Its bar (READING_BUTTONS, at the text) shows whenever no other does, until it ends
+            execute(ctx) {
+                if (reading) reading.stop();   // a new Read aloud reads the new text
+                const speech = window.speechSynthesis, voice = this.voice(ctx), field = ctx.snapshot.field, range = !field && ctx.snapshot.range;
+                const announce = () => window.dispatchEvent(new CustomEvent('lighthouse:state')), State = global.LighthouseState;
+                const paint = (name, r) => r ? CSS.highlights.set(name, Object.assign(new Highlight(r), { priority: name === 'lighthouse-sentence' ? 1 : 0 })) : CSS.highlights.delete(name);
+                const pos = [];   // [node, offset] of each character of the range that isn't a space
+                if (range) for (let w = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT), n = w.currentNode.nodeType === 3 ? w.currentNode : w.nextNode(); n; n = w.nextNode())
+                    if (range.intersectsNode(n)) for (let o = n === range.startContainer ? range.startOffset : 0; o < (n === range.endContainer ? range.endOffset : n.length); o++) if (/\S/.test(n.data[o])) pos.push([n, o]);
+                const exact = pos.map(([n, o]) => n.data[o]).join('') === ctx.text.replace(/\s+/g, '');
+                const sentences = [...Utils.segmenter('sentence').segment(ctx.text)].map(s => s.segment);
+                let i = 0, at = 0, run = 0;
+                const say = () => {
+                    const my = ++run, s = sentences[i];
+                    speech.cancel();
+                    if (s === undefined) return reading.stop();
+                    const len = s.replace(/\s+/g, '').length, u = Object.assign(new SpeechSynthesisUtterance(s), { voice, lang: voice.lang, rate: reading.rate });
+                    u.onstart = () => { if (my === run && exact && len) { const r = document.createRange(); r.setStart(...pos[at]); r.setEnd(pos[at + len - 1][0], pos[at + len - 1][1] + 1); paint('lighthouse-sentence', r); } };
+                    u.onend = () => { if (my === run) { at += len; i++; say(); } };
+                    setTimeout(() => { if (my === run) speech.speak(u); });   // speaking right after cancel() can be dropped
+                };
+                reading = { rate: 1, paused: false, ctx: { isLink: true, reading: true, text: ctx.text, element: range ? range.cloneRange() : field, hasText: true, buttons: READING_BUTTONS, facts: () => reading ? [`Reads at ${reading.rate}\u00d7`] : [] },
+                    toggle() { this.paused = !this.paused; if (this.paused) { ++run; speech.cancel(); } else say(); announce(); },
+                    setRate(r) { this.rate = r; if (!this.paused) say(); },
+                    stop() { ++run; speech.cancel(); paint('lighthouse-sentence'); paint('lighthouse-reading'); reading = null; announce(); State.send('reading'); } };
+                State.send('reading', { ctx: reading.ctx });
+                if (range) paint('lighthouse-reading', range.cloneRange());
+                say();
+                announce();
                 return { success: true };
             }
         },
@@ -447,7 +476,7 @@
             condition: (ctx) => ctx.hasText && !ctx.isInput && !ctx.isLink,
             execute: (ctx) => {
                 if (window.LighthouseMarkers) window.LighthouseMarkers.markTextSelection(ctx.text, setting('highlightColor'));
-                return { success: true, message: 'Highlighted' };
+                return { success: true };   // the highlight itself is the feedback
             },
             info: () => `Highlights in ${setting('highlightColor')}`,   // the color a click uses
             // Hover: the colors; the one picked becomes the default
@@ -477,9 +506,18 @@
             category: 'selection',
             icon: 'qr',
             condition: (ctx) => ctx.text.length > 0 && ctx.text.length <= 1000,
-            code: (ctx, size) => `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(ctx.text)}`,
-            url(ctx) { return this.code(ctx, 300); },
-            preview(ctx) { return { node: Utils.create('img', { className: 'qr-code', attrs: { src: this.code(ctx, 150), alt: 'QR code' } }) }; }
+            // Made by the extension (background.js): the text never leaves the browser
+            async preview(ctx, tools) {
+                const src = await tools.query('QR', { text: ctx.text });
+                return src ? { node: Utils.create('img', { className: 'qr-code', attrs: { src, alt: 'QR code' } }) } : { previewText: 'Too long for a QR code' };
+            },
+            async execute(ctx, tools) {   // the code as an image, to paste anywhere
+                const src = await tools.query('QR', { text: ctx.text });
+                if (!src) return { success: false, message: 'Too long for a QR code' };
+                const png = new Blob([Uint8Array.from(atob(src.split(',')[1]), c => c.charCodeAt(0))], { type: 'image/png' });
+                try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]); return { success: true, message: 'QR code copied' }; }
+                catch (e) { return { success: false, message: 'Couldn\u2019t copy the QR code' }; }
+            }
         },
 
         // --- INPUT ACTIONS ---
@@ -639,8 +677,8 @@
             result: (ctx) => getParsed(ctx, 'math', () => { const r = ctx.text.length < 50 ? MathLib.safeCalculate(ctx.text) : null; return r === null ? null : String(Number(r.toFixed(4))); }),
             condition(ctx) { return !ctx.isLink && this.result(ctx) !== null; },
             dynamicLabel(ctx) { return `∑ ${this.result(ctx)}`; },
-            execute(ctx, tools) {   // in a field the result replaces the calculation, as JSON and Decode do; else it is copied
-                if (ctx.isInput) tools.replace(this.result(ctx)); else tools.copy(this.result(ctx));
+            execute(ctx, tools) {   // in a field the result replaces the calculation (tools.place, as every result does); else it is copied
+                tools.place(this.result(ctx));
                 return { success: true, message: `Result: ${this.result(ctx)}` };
             },
             preview(ctx, tools) {
@@ -662,7 +700,7 @@
             async converted(ctx, tools) {
                 const parsed = this.parsed(ctx), target = userCurrency();
                 const found = parsed && parsed.amount !== null && parsed.base !== target && await tools.rate(parsed.base, target);
-                return found ? { ...parsed, target, ...found, value: (parsed.amount * found.rate).toFixed(2) } : null;
+                return found ? { ...parsed, target, ...found, value: MathLib.format(parsed.amount * found.rate, { currency: target }) } : null;
             },
             // When the rate is from: today the time, else the day
             rateAge(at) {
@@ -675,17 +713,18 @@
             },
             async dynamicLabel(ctx, tools) {
                 const c = await this.converted(ctx, tools);
-                return c ? `${Data.CURRENCY_SYMBOLS?.[c.target] || ''}${c.value} ${c.target}` : null;
+                return c ? c.value : null;
             },
             // The rate it uses, and when it is from (rates are kept for a day)
             async info(ctx, tools) {
                 const c = await this.converted(ctx, tools);
-                return c && `1 ${c.base} = ${c.rate.toLocaleString(undefined, { maximumSignificantDigits: 5 })} ${c.target}` + (c.asOf ? ` · ${this.rateAge(c.asOf)}` : '');
+                return c && this.rateLine(c);
             },
+            rateLine: (c) => `1 ${c.base} = ${c.rate.toLocaleString(undefined, { maximumSignificantDigits: 5 })} ${c.target}` + (c.asOf ? ` · ${ACTIONS.find(a => a.id === 'currency').rateAge(c.asOf)}` : ''),
             url: (ctx) => buildUrl('https://www.google.com/search?q=%s+convert', ctx.text),
             async preview(ctx, tools) {
                 const parsed = this.parsed(ctx), c = await this.converted(ctx, tools);
-                const label = c ? `${c.value} ${c.target}` : parsed && parsed.amount !== null && parsed.base !== userCurrency() ? 'Unavailable' : '...';
+                const label = c ? c.value : parsed && parsed.amount !== null && parsed.base !== userCurrency() ? 'Unavailable' : '...';
                 return tools.buildCopyMenu(label, label, 'Copy', [tools.convertPageItem()]);
             }
         },
@@ -698,7 +737,7 @@
             parse(text) {
                 const t = text.trim(), [found] = MathLib.findAmounts(t);
                 const conv = found && found.unit && found.index === 0 && found.length === t.length && MathLib.convertUnit(found.value, found.unit);
-                return conv ? { val: found.value, unitKey: found.unit, isMetric: conv.metric, result: `${conv.value.toFixed(2)} ${conv.target}` } : null;
+                return conv ? { val: found.value, unitKey: found.unit, isMetric: conv.metric, result: MathLib.format(conv.value, { unit: conv.target }) } : null;
             },
             parsed(ctx) { return getParsed(ctx, 'unit', () => this.parse(ctx.cleanText)); },
             condition(ctx) {
@@ -777,7 +816,7 @@
             condition(ctx) { return this.json(ctx) !== null; },
             execute(ctx, tools) {
                 const pretty = JSON.stringify(this.json(ctx), null, 2);
-                if (ctx.isInput) tools.replace(pretty); else tools.copy(pretty);
+                tools.place(pretty);
                 return { success: true, message: 'JSON formatted' };
             },
             preview(ctx) {
@@ -798,7 +837,7 @@
             }),
             condition(ctx) { return this.decoded(ctx) !== null; },
             execute(ctx, tools) {
-                if (ctx.isInput) tools.replace(this.decoded(ctx)); else tools.copy(this.decoded(ctx));
+                tools.place(this.decoded(ctx));
                 return { success: true, message: 'Base64 decoded' };
             },
             preview(ctx, tools) { return tools.buildCopyMenu(this.decoded(ctx), `"${Utils.shorten(this.decoded(ctx), 20)}"`); }
@@ -809,36 +848,22 @@
             category: 'smart',
             icon: 'palette',
             // "#ff0000" or "rgb(255, 0, 0)": { original, converted }, or null
+            // Explicit color syntax only (never a word like "red"), read by the browser itself: hex becomes rgb(),
+            // rgb() and hsl() become hex (with its transparency, if any)
             parse(text) {
-                let isHex = /^#([0-9A-F]{3}){1,2}$/i.test(text);
-                let isRgb = /^rgb\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3})\)$/i.test(text);
-                if (!isHex && !isRgb) return null;
-                let res;
-                if (isHex) {
-                    let hex = text.substring(1);
-                    if (hex.length === 3) hex = hex.split('').map(c => c+c).join('');
-                    const num = parseInt(hex, 16);
-                    res = `rgb(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255})`;
-                } else {
-                    const parts = text.match(/\d+/g);
-                    if (parts) {
-                        res = '#' + parts.map(p => {
-                            const h = parseInt(p).toString(16);
-                            return h.length === 1 ? '0' + h : h;
-                        }).join('');
-                    }
-                }
-                return { original: text, converted: res };
+                const t = text.trim(), style = new Option().style;
+                if (!/^(#([\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})|(rgba?|hsla?)\([^)]*\))$/i.test(t)) return null;
+                style.color = t;
+                const n = style.color.match(/[\d.]+/g);   // as the browser writes it: rgb(r, g, b) or rgba(r, g, b, a)
+                if (!n) return null;
+                const hex = '#' + [...n.slice(0, 3).map(Number), ...(n[3] !== undefined ? [Math.round(n[3] * 255)] : [])].map(v => v.toString(16).padStart(2, '0')).join('');
+                return { original: t, converted: t.startsWith('#') ? style.color : hex };
             },
             parsed(ctx) { return getParsed(ctx, 'color', () => this.parse(ctx.text)); },
             condition(ctx) { return this.parsed(ctx) !== null; },
             execute(ctx, tools) {
-                const parsed = this.parsed(ctx);
-                if (parsed?.converted) {
-                    tools.copy(parsed.converted);
-                    return { success: true, message: `Copied: ${parsed.converted}` };
-                }
-                return { success: false };
+                tools.place(this.parsed(ctx).converted);
+                return { success: true, message: 'Color converted' };
             },
             preview(ctx, tools) {
                 const parsed = this.parsed(ctx);

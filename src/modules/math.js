@@ -172,20 +172,27 @@
             return found;
         },
         // A text with its prices in the user's currency and its measurements in the user's system ("Convert page")
+        // A converted value as the reader writes it, everywhere it is shown: a price by the browser, in the reader's
+        // locale (₹480.00, 480,00 €); a measurement as a locale number with its unit (2,624.67 ft)
+        format: (value, { currency, unit }) => {
+            if (currency) try { return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(value); } catch (e) { /* not an ISO code */ }
+            return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${currency || unit}`;
+        },
+        // The prices and measurements in a text that convert: each { index, length, shown } (shown: as format writes it)
         convertText: async (text, targetCurrency, targetUnitSystem) => {
-            let out = text;
-            for (const a of MathLib.findAmounts(text, targetCurrency).reverse()) {   // from the end: earlier positions stay
+            const parts = [];
+            for (const a of MathLib.findAmounts(text, targetCurrency)) {
                 let shown = null;
                 if (a.currency && a.currency !== targetCurrency) {
                     const found = await MathLib.rate(a.currency, targetCurrency);
-                    if (found) shown = `${(a.value * found.rate).toFixed(2)} ${targetCurrency}`;
+                    if (found) { shown = MathLib.format(a.value * found.rate, { currency: targetCurrency }); a.rate = { base: a.currency, target: targetCurrency, ...found }; }
                 } else if (a.unit && !MathLib.inSystem(a.unit, targetUnitSystem)) {
                     const conv = MathLib.convertUnit(a.value, a.unit);
-                    if (conv) shown = `${conv.value.toFixed(2)} ${conv.target}`;
+                    if (conv) shown = MathLib.format(conv.value, { unit: conv.target });
                 }
-                if (shown) out = out.slice(0, a.index) + shown + out.slice(a.index + a.length);
+                if (shown) parts.push({ index: a.index, length: a.length, shown, rate: a.rate });
             }
-            return out === text ? null : out;
+            return parts;
         }
     };
     let words = null, matcher = null;   // the words for prices and measurements, and the pattern built from them

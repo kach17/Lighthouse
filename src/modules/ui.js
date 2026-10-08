@@ -1,6 +1,6 @@
 /**
  * Lighthouse - UI Module
- * Standardized Architecture: One Render Path, One Position Logic
+ * The bar, in a closed shadow root: one render path for every mode
  */
 (function() {
     const $ = window.LighthouseUtils;
@@ -10,7 +10,6 @@
     const TOOLTIP_ID = 'lighthouse-extension-tooltip';
     const POPOVER_CLASS = 'lighthouse-popover';
     
-    // Persistent References
     let shadowRoot = null, host = null;
     let tooltipContainer = null;
     
@@ -31,6 +30,7 @@
     function attachPopover(btn, build) {
         btn.classList.add('has-popover');
         let ready = null, timer = null;
+        btn._refill = () => ready && ready.then(el => { if (el && el._live) { el.replaceChildren(); build(el); } });   // live: after a keep-open action
         btn.addEventListener('mouseenter', () => {
             clearTimeout(timer);
             timer = setTimeout(async () => {
@@ -128,7 +128,8 @@
 
     // What the strip says when no button is pointed at: the selection's facts, or with a caret in a
     // field the field's (never both: two counts of different things would read as a contradiction)
-    const stripFacts = (ctx) => ctx.hasText ? selectionFacts(ctx) : fieldFacts(ctx);
+    // A context may say what matters about it (facts: a converted value's conversion, a link's address, nothing for a highlight)
+    const stripFacts = (ctx) => ctx.facts ? ctx.facts() : ctx.hasText ? selectionFacts(ctx) : fieldFacts(ctx);
 
     // first: the first button's label, said when there is no selection (what the bar offers first)
     function buildStrip(ctx, iconOnly, first) {
@@ -230,6 +231,7 @@
         host = $.create('div', { attrs: { id: HOST_ID }, style: 'display: none; position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;' });
         document.documentElement.appendChild(host);
         shadowRoot = host.attachShadow({ mode: 'closed' });
+        window.addEventListener('lighthouse:state', () => shownButtons.forEach(b => b._sync && b._sync()));   // toggles
         for (const path of ['src/content/tokens.css', 'src/content/styles.css']) shadowRoot.appendChild($.create('link', { attrs: { rel: 'stylesheet', href: chrome.runtime.getURL(path) } }));
         shadowRoot.appendChild($.create('style', { attrs: { id: 'lighthouse-user-styles' } }));   // the theme
         tooltipContainer = $.create('div', { attrs: { id: TOOLTIP_ID, role: 'tooltip' } });
@@ -259,7 +261,8 @@
         window.LighthouseInput.activate('bar');   // its keys listen only while it is open
 
         // Labels visible or icon-only (a data attribute: positioning rewrites the class list), and the theme
-        tooltipContainer.dataset.labels = State.get('showLabels') ? 'on' : 'off';
+        const labels = State.get('showLabels') || !!ctx.pointed;   // icons are for a group you choose from; a thing pointed at keeps its words
+        tooltipContainer.dataset.labels = labels ? 'on' : 'off';
         const theme = shadowRoot.getElementById('lighthouse-user-styles');
         const css = window.LighthouseData.resolveThemeCSS(settings).replace(/:root|:host/g, `:host(#${HOST_ID})`);
         if (theme.textContent !== css) theme.textContent = css;
@@ -267,7 +270,7 @@
         const apiCtx = API.prepareContext(ctx), ids = activeActions.map(a => a.id).join();
         if (inPlace && ids === shown) {   // the same buttons: their labels worked out again, nothing rebuilt
             current = apiCtx;
-            shownButtons.forEach(b => b._relabel && b._relabel());
+            shownButtons.forEach(b => { if (b._relabel) b._relabel(); if (b._refill) b._refill(); });
             if (strip) { strip.facts = stripFacts(apiCtx); if (!strip.tool) show(strip.facts); }   // the selection's and the field's facts
             updatePosition(ctx, true);
             return afterRefresh();
@@ -279,8 +282,9 @@
         pendingSnapshot = snapshot();
         tooltipContainer.innerHTML = '';
 
-        // The header: a hovered link, or the quoted selection (and the link in it, if it is one)
-        if (State.mode === 'LINK') renderLinkHeader(ctx);
+        // The header: a hovered link, a value (a converted one: what it was), or the quoted selection (and the link in it)
+        if (State.mode === 'LINK' && ctx.url) renderLinkHeader(ctx);
+        else if (ctx.value) renderValueHeader(ctx);
         else if (ctx.hasText) {
             renderTextHeader(ctx);
             const link = $.findLink(ctx.text);
@@ -297,7 +301,7 @@
         }
 
         // The strip: a row of the bar, so positioning and popovers already account for it
-        buildStrip(apiCtx, !State.get('showLabels'), activeActions[0] && activeActions[0].label);
+        buildStrip(apiCtx, !labels, activeActions[0] && activeActions[0].label);
         updatePosition(ctx, inPlace);
         void tooltipContainer.offsetWidth;
         tooltipContainer.classList.add('visible');
@@ -332,6 +336,12 @@
         tooltipContainer.appendChild(el);
     }
 
+    // A value, shown as previews show values (a converted value: what it was); the strip says its facts
+    function renderValueHeader(ctx) {
+        const el = $.create('div', { className: 'lighthouse-preview is-value', children: [$.create('span', { className: 'lighthouse-scroll-text', text: ctx.value.text })] });
+        tooltipContainer.appendChild(el);
+    }
+
     // A link (hovered, or the selection is one): where it goes, and with previews on, a card for the page
     function renderLinkHeader(ctx) {
         const tools = API.prepareContext(ctx).tools;
@@ -361,10 +371,12 @@
         }, ctx, tools));
     }
 
-    // After an action, from a button or a menu item: the bar closes, and the text is left as after
-    // any edit (a field keeps focus; on the page the selection collapses, revealing e.g. a highlight)
+    // After an action, from a button or a menu item: the bar and its handles close (through the state machine,
+    // not only when the selection changes: an action may already have replaced the selected text, as Convert
+    // page does), and the text is left as after any edit (a field keeps focus; on the page the selection
+    // collapses, revealing e.g. a highlight)
     function finish(ctx) {
-        destroy();
+        window.LighthouseState.send('close');
         if (ctx.isForm) ctx.element.focus();
         else if (!ctx.isLink) window.getSelection().collapseToEnd();
     }
@@ -395,12 +407,8 @@
             className: 'lighthouse-btn' + (def.textOnly ? ' text-only-btn' : ''), attrs: { 'data-action': def.id },
             children: [$.createSmartIcon(def.icon, def.iconUrl, def.label, def.findIcon), $.create('span', { className: 'lighthouse-label', text: def.label })]
         });
-        // Toggles (Read aloud) announce state changes with a 'lighthouse:state' event; no polling
-        if (def.isActive) {
-            const sync = () => btn.isConnected ? btn.classList.toggle('is-active', !!def.isActive()) : window.removeEventListener('lighthouse:state', sync);
-            window.addEventListener('lighthouse:state', sync);
-            sync();
-        }
+        // Toggles (Pause) announce state changes with a 'lighthouse:state' event; one listener re-syncs the shown buttons (init)
+        if (def.isActive) (btn._sync = () => btn.classList.toggle('is-active', !!def.isActive()))();
         // A label worked out for this selection: text, or { quote } shown as a quoted value that pans on hover (Paste)
         if (def.dynamicLabel) (btn._relabel = () => Promise.resolve(def.dynamicLabel(ctx, tools)).then(val => {
             const label = btn.querySelector('.lighthouse-label');
@@ -432,6 +440,7 @@
             if (data && !data.live) cacheSet(key, data);
         }
         if (!data) return null;
+        popover._live = !!data.live;
         if (data.previewText) {
             const el = $.create('div', { className: 'lighthouse-preview' + (data.isValue ? ' is-value' : ''), children: [$.create('span', { className: 'lighthouse-scroll-text', text: data.previewText })] });
             if (data.previewClick) { el.style.cursor = 'pointer'; el.onmousedown = stop(() => { data.previewClick(); destroy(); }); }

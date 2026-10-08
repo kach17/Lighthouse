@@ -41,7 +41,6 @@
         "<all_urls>"
       ],
       "css": [
-        "src/content/tokens.css",
         "src/content/page.css"
       ],
       "js": [

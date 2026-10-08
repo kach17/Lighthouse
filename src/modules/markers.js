@@ -1,44 +1,24 @@
-// Highlights, painted by the browser (CSS Custom Highlight API): the page's text is never changed
+// Highlights, painted by the browser (CSS Custom Highlight API): the page's text is never changed. Pointed at, a
+// highlight opens the bar for it, as a link does (Clear highlight). Their scrollbar hints live with the bar in its
+// closed shadow root: never in the page's content, and the page can't read the highlighted text they show
 (function () {
-    const Input = window.LighthouseInput;
-    const markers = [];            // { range, hint, rects (page coordinates), time }
+    const markers = [];            // { range, hint, color, text, time }
     const highlights = {};         // color → Highlight
-    let button = null, hovered = null, pending = null, hideTimer = null, observer = null;
+    let observer = null;
 
-    // Where a highlight is, in page coordinates (so scrolling doesn't change it), and its scrollbar mark
+    // Its scrollbar mark: where the highlight is in the whole page
     function measure(m) {
-        m.rects = [...m.range.getClientRects()].filter(r => r.width).map(r => ({ l: r.left + scrollX, t: r.top + scrollY, r: r.right + scrollX, b: r.bottom + scrollY }));
-        const H = document.documentElement.scrollHeight || 1, top = m.rects.length ? m.rects[0].t : 0, bottom = m.rects.length ? m.rects[m.rects.length - 1].b : top;
+        const rects = [...m.range.getClientRects()].filter(r => r.width), H = document.documentElement.scrollHeight || 1;
+        const top = rects.length ? rects[0].top + scrollY : 0, bottom = rects.length ? rects[rects.length - 1].bottom + scrollY : top;
         m.hint.style.top = `${Math.min(Math.max(top / H * innerHeight, 5), innerHeight - 5)}px`;
         m.hint.style.height = `${Math.max(10, (bottom - top) / H * innerHeight)}px`;
-    }
-
-    function show(m) {
-        clearTimeout(hideTimer);
-        if (!button) {
-            button = $.create('div', { className: 'marker-highlight-delete-floating', attrs: { role: 'button' },
-                html: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' });
-            button.addEventListener('mouseenter', () => clearTimeout(hideTimer));
-            button.addEventListener('click', (e) => { e.stopPropagation(); if (hovered) remove(hovered); });
-        }
-        if (!button.isConnected) document.body.appendChild(button);   // first use, or the page replaced its body
-        const last = m.rects[m.rects.length - 1];
-        if (!last) return;
-        hovered = m;
-        button.title = 'Marked ' + new Date(m.time).toLocaleString();
-        Object.assign(button.style, { display: 'flex', top: `${last.t - 10}px`, left: `${last.r + 5}px` });
-    }
-
-    function hide(delay = 200) {
-        clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => { if (button) button.style.display = 'none'; hovered = null; }, delay);
     }
 
     function remove(m) {
         highlights[m.color].delete(m.range);
         m.hint.remove();
         markers.splice(markers.indexOf(m), 1);
-        hide(0);
+        window.LighthouseContent.point.remove(m.range);
         if (!markers.length && observer) { observer.disconnect(); observer = null; }
     }
 
@@ -52,36 +32,19 @@
 
         const hint = $.create('div', { className: 'marker-scrollbar-hint', children: [$.create('span', { className: 'marker-scrollbar-tooltip', text })] });
         hint.style.background = `var(--lh-hl-${color})`;
-        const m = { range, hint, color, rects: [], time: Date.now() };
+        const m = { range, hint, color, text, time: Date.now() };
         hint.addEventListener('mousedown', () => m.range.startContainer.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
-        document.body.appendChild(hint);
+        window.LighthouseUI.shadowRoot.appendChild(hint);
         markers.push(m);
+        window.LighthouseContent.point.add(range, () => ({ isLink: true, text, element: range, hasText: true, facts: () => [], buttons: [{   // pointed at: its bar (content.js)
+            id: 'highlight-clear', label: 'Clear highlight', icon: 'clear', info: () => 'Marked ' + new Date(m.time).toLocaleTimeString([], { timeStyle: 'short' }),   // highlights last while the page is open
+            execute: () => { remove(m); return { success: true, message: 'Highlight cleared' }; } }] }));
         measure(m);
         if (hint.firstChild.getBoundingClientRect().top < 0) hint.firstChild.classList.add('marker-scrollbar-tooltip-bottom');
         // Positions change only when the page's size does (resizing, content loading in)
         if (!observer) (observer = new ResizeObserver(() => markers.forEach(measure))).observe(document.documentElement);
     }
 
-    function init() {
-        // Hovering: a cheap check that the element holds a highlight, then an exact one at most once a frame
-        Input.on({ type: 'mouseover', scope: 'page', handler: (e) => {
-            if (!markers.length || (button && button.contains(e.target))) return false;
-            if (!markers.some(m => m.range.intersectsNode(e.target))) { if (hovered) hide(); }
-            return false;
-        } });
-        Input.on({ type: 'mousemove', scope: 'page', handler: (e) => {
-            if (!markers.length || (button && button.contains(e.target)) || !markers.some(m => m.range.intersectsNode(e.target))) return false;
-            const first = !pending;
-            pending = { x: e.clientX + scrollX, y: e.clientY + scrollY };
-            if (first) requestAnimationFrame(() => {
-                const { x, y } = pending; pending = null;
-                const m = markers.find(k => k.rects.some(r => x >= r.l && x <= r.r && y >= r.t && y <= r.b));
-                m ? show(m) : (hovered && hide());
-            });
-            return false;
-        } });
-    }
-
     const $ = window.LighthouseUtils;
-    window.LighthouseMarkers = { init, markTextSelection };
+    window.LighthouseMarkers = { markTextSelection };
 })();
