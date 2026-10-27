@@ -1,0 +1,220 @@
+/**
+ * Lighthouse - Main Controller
+ * Connects the input manager's events to the pipeline (selectionChanged) and to the bar's state machine.
+ */
+(function () {
+    const UI = window.LighthouseUI, SelLib = window.LighthouseSelection, State = window.LighthouseState;
+    const Handles = window.LighthouseHandles, Input = window.LighthouseInput, $ = window.LighthouseUtils;
+
+    const originals = new WeakMap();   // a value Convert page changed -> { text it was, rate, shown }
+    let interactionTimer = null, selectionRun = 0;
+    const close = () => State.send('close');
+
+    function init() {
+        State.init();
+        UI.init();
+        Handles.onRelease(() => selectionChanged('drag'));   // a released handle: the same pipeline
+        // The words for prices and measurements in this reader's languages and the page's, once the page is idle
+        requestIdleCallback(() => window.LighthouseMath.loadWords([...window.LighthouseLanguage.userLanguages(), window.LighthouseData.baseLanguage(window.LighthouseLanguage.pageLanguage())]));
+        UI.onDestroy(() => [openTimer, closeTimer, interactionTimer].forEach(clearTimeout));
+
+        // What the state machine (state.js) shows, moves and hides
+        State.connect({
+            show: (withHandles, inPlace) => { UI.render(State, { inPlace }); if (withHandles) Handles.show(); },
+            place: (withHandles) => { UI.updatePosition(State.ctx); if (withHandles) Handles.show(); },
+            hide: (barOnly) => { UI.destroy(); if (!barOnly) Handles.hide(); }
+        });
+
+        // All input goes through the input manager (input.js): it attaches only what the active scopes
+        // need, and nothing on switched-off sites. Each event becomes one pipeline run or one named event.
+        // Order matters: a handler that returns true has handled the event, and later ones are skipped.
+        const on = (type, scope, handler, extra = {}) => Input.on({ type, scope, handler: (e) => handler(e) || false, ...extra });
+        const editor = { inManagedEditors: true };
+
+        // While the bar is open: Escape closes it, Tab accepts the first snippet
+        on('keydown', 'bar', () => { close(); return true; }, { keys: ['Escape'] });
+        on('keydown', 'bar', (e) => {
+            if (State.mode !== 'SNIPPET_MENU' || !State.activeActions.length) return;
+            e.preventDefault();
+            State.activeActions[0].execute();
+            close();
+            return true;
+        }, { keys: ['Tab'] });
+        // Keyboard selections (Shift / arrows); only while there is a selection to extend or a field is focused
+        on('keyup', ['selection', 'editable'], (e) => selectionChanged('key', e),
+            { afterSelecting: true, keys: ['Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'], ...editor });
+        // In a field: an edit about to happen (also one the page makes itself, which sends no input event),
+        // leaving it (coming back is a first click again), and typing (snippets)
+        on('beforeinput', 'editable', () => State.send('edit'), editor);
+        on('keydown', 'editable', () => State.send('edit'), { keys: ['Backspace', 'Delete'], ...editor });
+        on('focusout', 'editable', (e) => State.send('fieldLeft', { to: e.relatedTarget }), editor);
+        on('input', 'editable', (e) => { if (!State.acting) { handleTextExpansion(e); State.send('typed'); } }, editor);
+        window.LighthouseEditing.init({ onEdit: close });   // tidy spacing, brackets and quotes
+
+        // The third click of a triple-click: the bar leaves now and returns for the paragraph
+        on('mousedown', 'page', (e) => { if (e.detail === 3 && e.button === 0 && State.mode !== 'HIDDEN') close(); });
+        on('mouseup', 'page', (e) => selectionChanged('pointer', e));
+        on('mouseover', 'page', pointerOver);
+        on('dragstart', 'page', () => { if (State.mode !== 'HIDDEN') close(); });
+        on('selectionchange', 'page', () => { if (!Input.hasSelection()) State.send('selectionLost', { inField: !!Input.fieldKind(Input.focusedElement()) }); });
+        on('scroll', 'page', () => State.send('moved'));
+        on('resize', 'page', () => State.send('moved'));
+        on('blur', 'page', () => { if (State.mode !== 'HIDDEN') close(); });
+    }
+
+    // Called by the "Convert page" item. Not a page event: pages can't trigger it.
+    // refresh: the bar stays after an action (keepOpen) and shows what fits the selection now
+    window.LighthouseContent = { convertAllOnPage: () => convertAllOnPage(), point: { add: (range, context) => ranges.set(range, context), remove: (range) => ranges.delete(range) },
+        refresh: () => State.mode === 'LINK' ? State.send('link', { ctx: State.ctx, inPlace: true }) : selectionChanged('refresh') };
+
+    // Every price and measurement in the page's text, in the user's currency and units: each value on its own,
+    // the rest of the text untouched
+    async function convertAllOnPage() {
+        const { currency, units } = State.get('standards');
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: (node) => {
+            const el = node.parentNode;
+            if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA'].includes(el.nodeName) || el.isContentEditable) return NodeFilter.FILTER_REJECT;
+            if (el.classList && (el.classList.contains('lighthouse-converted') || el.classList.contains('lighthouse-converted-price'))) return NodeFilter.FILTER_REJECT;
+            return node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        } });
+        const nodes = [];
+        for (let n; (n = walker.nextNode());) nodes.push(n);
+        for (const node of nodes) {
+            const parts = await window.LighthouseMath.convertText(node.nodeValue, currency, units);
+            if (!node.isConnected) continue;
+            for (const part of parts.reverse()) {   // from the end: earlier positions stay
+                const value = node.splitText(part.index);
+                value.splitText(part.length);
+                const span = $.create('span', { className: 'lighthouse-converted', text: part.shown });
+                originals.set(span, { text: value.nodeValue, rate: part.rate, shown: part.shown });
+                value.replaceWith(span);
+            }
+        }
+    }
+
+    // A converted value's bar: Convert's popover mirrored. The preview is what it was, then Undo all; the strip says
+    // the conversion (a price: Convert's own rate line; a measurement: what it was and what it became)
+    function convertedContext(span) {
+        const { text, rate, shown } = originals.get(span), value = text.trim();
+        const conversion = rate ? window.LighthouseActions.find(a => a.id === 'currency').rateLine(rate) : `${value} = ${shown}`;
+        return { isLink: true, text, element: span, hasText: true, value: { text: value }, facts: () => [conversion],
+            buttons: [{ id: 'converted-undo', label: 'Undo all', icon: 'undo', execute: () => { restoreOriginals(); return { success: true }; } }] };
+    }
+    function restoreOriginals() {
+        document.querySelectorAll('.lighthouse-converted').forEach(span => { const parent = span.parentNode; span.replaceWith(originals.has(span) ? originals.get(span).text : span.textContent); parent.normalize(); });
+    }
+
+    function handleTextExpansion(e) {
+        const el = e.target;
+        if (UI.contains(el)) return;
+
+        // The current line up to the caret. Where the caret can't be read (email): the value, with a
+        // trigger counting only at its end
+        const surface = SelLib.surface(el);
+        const read = surface.precise ? surface.read({ before: 'line' }) : surface.read('all');
+        if (!read) return;
+        const line = surface.precise ? read.before : read.text;
+        const at = line.lastIndexOf('//');
+        if (at === -1 || (at > 0 && line[at - 1] !== ' ')) return State.send('snippetsGone');   // a trigger starts the line or follows a space
+
+        const typed = line.substring(at), startLineText = line.substring(0, at);
+        // Replace what was typed (just before the caret) with the expansion, as typing it would
+        const expand = (text, expansion, appendSpace) => {
+            if (surface.precise) window.LighthouseAPI.getTools(SelLib.getContext()).replace(expansion, { smartIndent: true, startLineText, appendSpace, span: { before: { text } } });
+            else surface.rewrite('all', ({ text: all }) => ({ text: all.slice(0, all.length - text.length) + expansion }));   // one edit: undo still works
+        };
+        const isSpace = e.data === ' ', ends = isSpace || e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph';
+        const spaceInValue = isSpace && /\s$/.test(line);   // the browser trims it in some fields (email); rich text types a no-break space
+        const trigger = typed.slice(2, spaceInValue ? -1 : undefined).trim();
+        const shortcuts = State.get('shortcuts');
+
+        // Space or Enter after a whole trigger expands it
+        if (ends) {
+            const match = shortcuts.find(s => s.trigger === trigger);
+            if (!match) return State.send('snippetsGone');
+            const length = 2 + trigger.length + (spaceInValue ? 1 : 0);
+            if (length <= line.length) { expand(line.slice(-length), match.expansion, isSpace); close(); }
+            return;
+        }
+        // Part of one: the snippets it could be
+        const matches = shortcuts.filter(s => s.trigger.startsWith(trigger));
+        if (!matches.length) return State.send('snippetsGone');
+        State.send('snippets', { ctx: Object.assign(SelLib.getContext(), { text: typed, hasText: true }), actions: matches.slice(0, 4).map((match, i) => ({
+            id: 'snippet-' + i, label: match.trigger, icon: 'chat', textOnly: true, keepOpen: false,
+            execute: () => (expand(typed, match.expansion), { success: true }),
+            preview: () => ({ node: $.create('div', { className: 'lh-snippet', text: match.expansion }) })
+        })) });
+    }
+
+    // The one way a changed selection reaches the bar. reason: 'pointer' (a mouse up, a click into a field),
+    // 'key' (a selecting key), 'drag' (a handle released) or 'refresh' (an action that keeps the bar open). Waits for a triple-click to land, reads the
+    // selection, snaps a pointer selection (then reads it again), and once its language is known shows the
+    // bar, if the selection is still the one that was read.
+    function selectionChanged(reason, e = null) {
+        const refresh = reason === 'refresh';
+        if ((State.busy && !refresh) || State.isDisabledHere()) return;   // a keep-open action or a drag owns the selection
+        if (e) {
+            if (UI.contains(e.target)) return;   // a key on the bar, not the page (its presses never reach here)
+            State.lastEvent = e;
+        }
+        const pointer = reason === 'pointer' ? e : null;
+        clearTimeout(interactionTimer);
+        const run = ++selectionRun;   // a later selection supersedes this one, also while it waits below
+        interactionTimer = setTimeout(async () => {
+            // Lighthouse hears the mouseup first (capture), so this runs before the page's own follow-up to it.
+            // Editors that keep their own selection (ProseMirror: Claude, Tiptap) write it back to the page in a
+            // task queued from their mouseup, which would undo a snap made before it: wait one task behind it
+            if (pointer) { await new Promise(r => setTimeout(r, 0)); if (run !== selectionRun) return; }
+            if (pointer && State.mode === 'HIDDEN' && !Input.hasSelection() && !Input.fieldKind(Input.focusedElement())) return;   // a click that selected nothing, nothing open
+            let ctx = SelLib.getContext(pointer);
+            if (pointer && ctx.hasText && State.get('smartSnapping') && (Input.lastPress() || {}).owner !== 'user') {   // with Alt: exactly what was dragged
+                try { SelLib.performSnap(); ctx = SelLib.getContext(pointer); } catch (err) { /* text it can't snap: as selected */ }
+            }
+            const { foreign, language, reliable } = await ctx.snapshot.language;   // on-device, at most a few ms
+            if (!SelLib.isCurrent(ctx.snapshot)) return;   // changed meanwhile (e.g. already deleted)
+            Object.assign(ctx, { foreign, language, languageReliable: reliable === true });
+            State.send('selected', { ctx, inPlace: refresh });
+        }, pointer && pointer.detail === 3 ? 200 : 0);   // a triple-click's paragraph lands after the click
+    }
+
+    // Hovering an external link shows its bar; leaving it (and not into the bar) closes that bar
+    // ---------- Pointing: links, converted values and highlights, one way ----------
+    // Pointed at, a thing opens its bar after a pause; left, its bar closes a moment later unless the pointer went onto
+    // it. Elements are found from the element pointed at (HOVERED: external links, converted values); ranges (highlights,
+    // added by markers.js) by position, looked at only inside an element that holds one
+    const HOVERED = 'a, .lighthouse-converted', OPEN_DELAY = 400, CLOSE_DELAY = 200, ranges = new Map();   // range -> its context
+    let pointed = null, openTimer = null, closeTimer = null, moves = null, pending = null;
+    function point(target) {   // { key, context } or null
+        if (target && pointed && target.key === pointed.key) return clearTimeout(closeTimer);
+        const was = pointed;
+        pointed = target;
+        clearTimeout(openTimer);
+        if (was) closeTimer = setTimeout(() => { if (State.ctx && State.ctx.pointed === was.key && !window.getSelection().toString()) close(); }, CLOSE_DELAY);
+        if (target) openTimer = setTimeout(() => {
+            const ctx = !window.getSelection().toString() && target.context();
+            if (ctx) State.send('link', { ctx: { ...ctx, pointed: target.key } });
+        }, OPEN_DELAY);
+    }
+    const rangeAt = (target, x, y) => {
+        for (const [range, context] of ranges) if (range.intersectsNode(target) && [...range.getClientRects()].some(r => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom)) return { key: range, context };
+        return null;
+    };
+    function pointerOver(e) {
+        if (UI.contains(e.target)) { if (State.ctx && State.ctx.pointed) { clearTimeout(closeTimer); pointed = { key: State.ctx.pointed }; } return; }   // onto its bar: it stays
+        const p = Input.lastPress();
+        if (p && p.owner === 'bar' && e.clientX === p.x && e.clientY === p.y) return;   // the pointer hasn't moved since a click on the bar: the bar closed over it
+        const el = e.target.closest(HOVERED);
+        if (el && (el.tagName !== 'A' || el.hostname !== window.location.hostname)) return point({ key: el, context: () => originals.has(el) ? convertedContext(el) : SelLib.getLinkContext(el) });
+        const near = [...ranges.keys()].some(r => r.intersectsNode(e.target));   // only then is the position needed
+        if (near && !moves) moves = Input.on({ type: 'mousemove', scope: 'page', handler: (ev) => {
+            if (UI.contains(ev.target)) return false;
+            if (!pending) requestAnimationFrame(() => { point(rangeAt(pending.target, pending.x, pending.y)); pending = null; });
+            pending = { target: ev.target, x: ev.clientX, y: ev.clientY };
+            return false;
+        } });
+        if (!near && moves) { moves(); moves = null; }
+        point(near ? rangeAt(e.target, e.clientX, e.clientY) : null);
+    }
+
+    init();
+})();

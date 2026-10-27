@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lighthouse Settings</title>
+  <link rel="stylesheet" href="../content/tokens.css">
+  <link rel="stylesheet" href="../content/styles.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="lh-popup">
+  <header class="p-head">
+    <span class="p-mark">Lighthouse</span>
+    <label class="p-site lh-toggle">
+      <input type="checkbox" id="toggle-site" class="lh-visually-hidden">
+      <span class="p-site-name" id="current-site"></span>
+      <span class="lh-seg is-control p-site-seg" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
+    </label>
+  </header>
+
+  <nav class="lh-seg p-tabs" role="tablist">
+    <button class="lh-seg-btn tab is-engaged" role="tab" data-tab="menu">Buttons</button>
+    <button class="lh-seg-btn tab" role="tab" data-tab="search">Search</button>
+    <button class="lh-seg-btn tab" role="tab" data-tab="shortcuts">Snippets</button>
+    <button class="lh-seg-btn tab" role="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <main class="p-body">
+    <!-- BUTTONS -->
+    <section id="tab-menu" class="tab-content active">
+      <p class="lh-desc">Click to turn a button on or off. Drag to reorder.</p>
+      <ul id="button-list" class="lh-list"></ul>
+    </section>
+
+    <!-- SEARCH -->
+    <section id="tab-search" class="tab-content">
+      <p class="lh-desc">Click to turn an engine on or off. Drag to reorder.</p>
+      <ul id="search-list" class="lh-list"></ul>
+      <button class="lh-row lh-add-trigger" id="add-trigger"><span class="lh-add-plus">+</span><span class="lh-row-label">Add engine</span></button>
+      <div class="lh-add-form" id="add-form" hidden>
+        <input type="text" id="new-url" class="lh-field" placeholder="Search address, with %s where the words go">
+        <input type="text" id="new-name" class="lh-field" placeholder="Name (optional)">
+        <div class="lh-add-actions"><button id="cancel-add" class="lighthouse-btn">Cancel</button><button id="save-add" class="lighthouse-btn is-outlined">Add</button></div>
+      </div>
+    </section>
+
+    <!-- SNIPPETS -->
+    <section id="tab-shortcuts" class="tab-content">
+      <p class="lh-desc" id="shortcuts-empty">Save text you type often, then type //name and Space to insert it anywhere.</p>
+      <ul id="shortcuts-list" class="lh-list"></ul>
+      <p class="lh-desc p-hint" id="shortcuts-hint" hidden>Type //name then Space to insert.</p>
+      <button class="lh-row lh-add-trigger" id="add-shortcut-trigger"><span class="lh-add-plus">+</span><span class="lh-row-label">Add snippet</span></button>
+      <div class="lh-add-form" id="add-shortcut-form" hidden>
+        <div class="p-prefix-field"><span class="p-prefix" aria-hidden="true">//</span><input type="text" id="new-shortcut-trigger" class="lh-field is-mono" placeholder="addr" maxlength="12" aria-label="Snippet name, typed after //" spellcheck="false" autocomplete="off"></div>
+        <textarea id="new-shortcut-expansion" class="lh-field" placeholder="Text to insert" rows="3" maxlength="500"></textarea>
+        <p class="p-error" id="shortcut-error" role="alert" hidden></p>
+        <div class="lh-add-actions"><button id="cancel-add-shortcut" class="lighthouse-btn">Cancel</button><button id="save-add-shortcut" class="lighthouse-btn is-outlined">Add</button></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" class="tab-content">
+      <h2 class="lh-section-title">Behaviour</h2>
+      <label class="lh-row lh-toggle">
+        <input type="checkbox" id="toggle-snapping" data-setting="smartSnapping" class="lh-visually-hidden">
+        <span class="lh-row-text"><span>Select whole words</span></span>
+        <span class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
+      </label>
+      <label class="lh-row lh-toggle">
+        <input type="checkbox" id="toggle-handles" data-setting="addDragHandles" class="lh-visually-hidden">
+        <span class="lh-row-text"><span>Selection handles</span><small>Drag the ends of a selection to adjust it</small></span>
+        <span class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
+      </label>
+      <label class="lh-row lh-toggle">
+        <input type="checkbox" id="toggle-tidy" data-setting="tidySpacing" class="lh-visually-hidden">
+        <span class="lh-row-text"><span>Tidy spacing</span><small>When you delete, cut or paste</small></span>
+        <span class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
+      </label>
+      <div class="lh-row p-static">
+        <span class="lh-row-text"><span>Brackets and quotes</span><small>Wrap a selection, or also close them as you type</small></span>
+        <div class="lh-seg is-control" role="radiogroup" aria-label="Brackets and quotes">
+          <label class="lh-seg-btn"><input type="radio" name="brackets" value="off" data-setting="brackets" class="lh-visually-hidden">Off</label><label class="lh-seg-btn"><input type="radio" name="brackets" value="wrap" data-setting="brackets" class="lh-visually-hidden">Wrap</label><label class="lh-seg-btn"><input type="radio" name="brackets" value="close" data-setting="brackets" class="lh-visually-hidden">Close</label>
+        </div>
+      </div>
+      <label class="lh-row lh-toggle">
+        <input type="checkbox" id="toggle-link-previews" class="lh-visually-hidden">
+        <span class="lh-row-text"><span>Link previews</span><small>A link's title and image on hover. Contacts that site.</small></span>
+        <span class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
+      </label>
+
+      <h2 class="lh-section-title">Region</h2>
+      <div class="lh-row p-static"><label class="lh-row-label" for="std-lang">Read in</label><span class="lh-select"><select id="std-lang" class="lh-field"></select></span></div>
+      <div class="lh-row p-static"><label class="lh-row-label" for="std-write">Write in</label><span class="lh-select"><select id="std-write" class="lh-field"><option value="">Choose…</option></select></span></div>
+      <div class="lh-row p-static"><label class="lh-row-label" for="std-curr">Currency</label><span class="lh-select"><select id="std-curr" class="lh-field"></select></span></div>
+      <div class="lh-row p-static">
+        <label class="lh-row-label" for="std-units">Units</label>
+        <span class="lh-select"><select id="std-units" class="lh-field">
+          <option value="metric">Metric (km, kg, °C)</option>
+          <option value="imperial">Imperial (mi, lb, °F)</option>
+        </select></span>
+      </div>
+
+      <h2 class="lh-section-title">Appearance</h2>
+      <label class="lh-row lh-toggle">
+        <input type="checkbox" id="toggle-labels" data-setting="showLabels" class="lh-visually-hidden">
+        <span class="lh-row-text"><span>Button labels</span><small>Names next to the icons in the bar</small></span>
+        <span class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
+      </label>
+      <div class="lh-row p-static">
+        <span class="lh-row-label">Theme</span>
+        <div class="lh-seg is-control" role="radiogroup" aria-label="Theme"><label class="lh-seg-btn"><input type="radio" name="theme" value="light" class="lh-visually-hidden">Light</label><label class="lh-seg-btn"><input type="radio" name="theme" value="dark" class="lh-visually-hidden">Dark</label></div>
+      </div>
+
+      <details class="p-dev">
+        <summary class="lh-row"><span class="lh-row-label">Advanced</span><span class="p-disclosure" aria-hidden="true"></span></summary>
+        <div class="p-dev-block">
+          <label class="lh-row-label" for="custom-css-input">Custom CSS</label>
+          <textarea id="custom-css-input" class="lh-field is-mono p-css" spellcheck="false" placeholder="/* Custom CSS */"></textarea>
+          <div class="p-dev-actions"><button id="save-css-btn" class="lighthouse-btn is-outlined">Save CSS</button></div>
+        </div>
+        <div class="p-dev-block">
+          <span class="lh-row-label">Backup and restore</span>
+          <div class="p-dev-actions">
+            <button id="export-settings-btn" class="lighthouse-btn is-outlined">Export</button>
+            <button id="import-settings-btn" class="lighthouse-btn is-outlined">Import</button>
+            <input type="file" id="import-file-input" accept=".json" hidden>
+          </div>
+        </div>
+        <p class="lh-desc p-version" id="version-label"></p>
+      </details>
+    </section>
+  </main>
+
+  <script src="../utils/utils.js"></script>
+  <script src="../utils/data.js"></script>
+  <script src="../modules/math.js"></script>
+  <script src="../modules/actions.js"></script>
+  <script src="../utils/config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
