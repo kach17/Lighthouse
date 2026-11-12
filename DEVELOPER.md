@@ -23,7 +23,7 @@ User event → selectionChanged (content.js) → selection.js builds the snapsho
 
 Each step is isolated. `state.js` doesn't touch the DOM. `ui.js` doesn't know about selection logic. `content.js` just connects them.
 
-Every event enters through `input.js`, which also decides who a press belongs to, once, as it begins: the bar's (a press on Lighthouse, heard only by its own `bar` and `drag` scopes), the user's (one made holding Alt: exactly what is dragged is selected, without snapping, and the page neither hears the press nor acts on it) or the page's. Handlers never check where a press came from; they only receive the ones that are theirs.
+Every event enters through `input.js`, which also decides who a press belongs to, once, as it begins: the bar's (a press on Lighthouse, heard only by its own `bar` and `drag` scopes), the user's (one begun holding Alt: anything can be selected, and the page neither hears the press nor acts on it) or the page's. Snapping is decided at release instead: with Alt down then, the selection stays exactly as dragged. Handlers never check where a press came from; they only receive the ones that are theirs.
 
 ---
 

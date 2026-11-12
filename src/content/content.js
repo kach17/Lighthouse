@@ -167,7 +167,7 @@
             if (pointer) { await new Promise(r => setTimeout(r, 0)); if (run !== selectionRun) return; }
             if (pointer && State.mode === 'HIDDEN' && !Input.hasSelection() && !Input.fieldKind(Input.focusedElement())) return;   // a click that selected nothing, nothing open
             let ctx = SelLib.getContext(pointer);
-            if (pointer && ctx.hasText && State.get('smartSnapping') && (Input.lastPress() || {}).owner !== 'user') {   // with Alt: exactly what was dragged
+            if (pointer && ctx.hasText && State.get('smartSnapping') && !pointer.altKey) {   // Alt down at release: exactly what was dragged
                 try { SelLib.performSnap(); ctx = SelLib.getContext(pointer); } catch (err) { /* text it can't snap: as selected */ }
             }
             const { foreign, language, reliable } = await ctx.snapshot.language;   // on-device, at most a few ms
