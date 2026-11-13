@@ -1,4 +1,4 @@
-# A release for every new version: when a push to main carries a version (manifest.json) that has no release
+# A release for every new version: when a push to Revamp (the default branch) carries a version (manifest.json) that has no release
 # yet, this makes one, named and tagged after it, with its notes from CHANGELOG.md and the extension's zip
 # attached (what a download has: the extension and its license; manifest.json at the zip's top, as the
 # Chrome Web Store expects). Pushes that keep the version change nothing.
@@ -6,7 +6,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [Revamp]
   workflow_dispatch:
 
 permissions:
