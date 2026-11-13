@@ -200,6 +200,8 @@ The bar, its handles and the highlights' button and hints render in a closed sha
 
 `tests/` (local, not in the repository) holds logic tests and browser tests that load the real extension into Chromium; see `tests/README.md`. Run `npm test` there before and after a change, and add a test with every bug fix. `tests/editors/` runs the content scripts against real editors (ProseMirror, Lexical, Quill, CodeMirror 6) and the settings popup; see its README.
 
+**Releasing:** add the version's section to `CHANGELOG.md` (a `## 1.5` heading), raise `version` in `manifest.json`, and push to `main`. A workflow (`.github/workflows/release.yml`) then makes the release, with those notes and the extension's zip. A push that keeps the version makes none.
+
 ## Debugging
 
 **Content scripts:** in the page's console (F12), choose Lighthouse in the context menu at the top (it says "top" by default); then `LighthouseState`, `LighthouseSelection.current()` and the rest can be read.

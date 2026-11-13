@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Lighthouse",
   "version": "1.4",
-  "description": "A lightweight, modular text selection tooltip extension.",
+  "description": "Look up, translate and convert selected text, and tidy what you type, right on the page.",
   "minimum_chrome_version": "120",
   "permissions": [
     "activeTab",

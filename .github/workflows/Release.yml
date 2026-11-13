@@ -1,0 +1,50 @@
+# A release for every new version: when a push to main carries a version (manifest.json) that has no release
+# yet, this makes one, named and tagged after it, with its notes from CHANGELOG.md and the extension's zip
+# attached (what a download has: the extension and its license; manifest.json at the zip's top, as the
+# Chrome Web Store expects). Pushes that keep the version change nothing.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: echo "version=$(jq -r .version manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Released already?
+        id: released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" > /dev/null 2>&1; then
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notes and zip
+        if: steps.released.outputs.yes != 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # The version's section of the changelog: from its heading to the next one
+          awk -v v="## $VERSION" '$0 == v { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Lighthouse $VERSION" > notes.md
+          git archive --format=zip -o "lighthouse-$VERSION.zip" HEAD
+
+      - name: Release
+        if: steps.released.outputs.yes != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v$VERSION" "lighthouse-$VERSION.zip" \
+            --title "Lighthouse $VERSION" --notes-file notes.md --target "$GITHUB_SHA"

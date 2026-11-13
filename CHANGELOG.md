@@ -3,7 +3,7 @@
 ## 1.4
 
 **Works in more places**
-- Brackets and tidy spacing now work in rich editors (ChatGPT, Claude, Gemini, Notion, Gmail and the like), not only in plain text fields.
+- Brackets and tidy spacing now work in rich text editors too, like the ones in chat apps, email and notes, not only in plain text boxes.
 - Fixed: on pages that focus their text box as they load, snippets, brackets and tidy spacing didn't work until you switched tabs and back.
 - Fixed: multi-line snippets lost every line after the first in some editors.
 - Fixed: the background service failed to start on Linux.
@@ -30,6 +30,6 @@
 **Tidier, and out of the way**
 - Typing over a selection that ends in a space keeps the space ("small " → "big noodles").
 - Text inserted inside a word no longer gets spaces around it.
-- Code editors behave exactly as without Lighthouse.
+- Code editors are left alone, so tidying never touches your code.
 - Selections across paragraphs in rich editors are left to the editor, and the bar no longer offers editing there.
 - An editor's own bracket pairing is respected.

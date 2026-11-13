@@ -1,0 +1,9 @@
+# Left out of every download (GitHub's Download ZIP, release archives, git archive): only the extension
+# and its license ship. A clone still has everything, for working on Lighthouse.
+/README.md export-ignore
+/DEVELOPER.md export-ignore
+/CHANGELOG.md export-ignore
+/docs export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.github export-ignore
