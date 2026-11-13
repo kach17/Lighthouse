@@ -29,17 +29,29 @@
         // need, and nothing on switched-off sites. Each event becomes one pipeline run or one named event.
         // Order matters: a handler that returns true has handled the event, and later ones are skipped.
         const on = (type, scope, handler, extra = {}) => Input.on({ type, scope, handler: (e) => handler(e) || false, ...extra });
-        const editor = { inManagedEditors: true };
+        const editor = { inProxyFields: true };
 
-        // While the bar is open: Escape closes it, Tab accepts the first snippet
+        // While the bar is open: Escape closes it. The snippet menu: Tab takes the only snippet, or picks among several
+        // (again: the next, Shift: back) and ← → then move the pick; Enter takes the picked one, or a whole trigger
+        // typed (the page never hears that Enter: a chat doesn't send "//sig"). Until a pick, arrows and Enter are the text's
         on('keydown', 'bar', () => { close(); return true; }, { keys: ['Escape'] });
         on('keydown', 'bar', (e) => {
-            if (State.mode !== 'SNIPPET_MENU' || !State.activeActions.length) return;
+            const all = State.mode === 'SNIPPET_MENU' ? State.activeActions : [], n = all.length, at = State.pick;
+            if (!n) return;
+            if (e.key === 'Enter' || (e.key === 'Tab' && n === 1)) {
+                const take = e.key === 'Tab' ? 0 : at >= 0 ? at : all.findIndex(a => '//' + a.label === State.ctx.text);
+                if (take < 0) return;
+                e.preventDefault();
+                all[take].execute();
+                close();
+                return true;
+            }
+            if (e.key !== 'Tab' && at < 0) return;
             e.preventDefault();
-            State.activeActions[0].execute();
-            close();
+            State.pick = at < 0 ? (e.shiftKey ? n - 1 : 0) : (at + (e.shiftKey || e.key === 'ArrowLeft' ? n - 1 : 1)) % n;
+            UI.pick(State.pick);
             return true;
-        }, { keys: ['Tab'] });
+        }, { keys: ['Tab', 'Enter', 'ArrowLeft', 'ArrowRight'], allowRepeat: true });
         // Keyboard selections (Shift / arrows); only while there is a selection to extend or a field is focused
         on('keyup', ['selection', 'editable'], (e) => selectionChanged('key', e),
             { afterSelecting: true, keys: ['Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'], ...editor });
@@ -47,8 +59,10 @@
         // leaving it (coming back is a first click again), and typing (snippets)
         on('beforeinput', 'editable', () => State.send('edit'), editor);
         on('keydown', 'editable', () => State.send('edit'), { keys: ['Backspace', 'Delete'], ...editor });
-        on('focusout', 'editable', (e) => State.send('fieldLeft', { to: e.relatedTarget }), editor);
+        on('focusout', 'editable', (e) => { if (composer && e.target === composer.ref.deref()) keepComposer(e.target); State.send('fieldLeft', { to: e.relatedTarget }); }, editor);
         on('input', 'editable', (e) => { if (!State.acting) { handleTextExpansion(e); State.send('typed'); } }, editor);
+        // Send's composer: the last multi-line box typed in (code editors and proxy fields aren't: no opt-in)
+        on('input', 'editable', () => { const el = Input.focusedElement(); if (el && (el.tagName === 'TEXTAREA' || el.isContentEditable)) keepComposer(el); });
         window.LighthouseEditing.init({ onEdit: close });   // tidy spacing, brackets and quotes
 
         // The third click of a triple-click: the bar leaves now and returns for the paragraph
@@ -64,7 +78,7 @@
 
     // Called by the "Convert page" item. Not a page event: pages can't trigger it.
     // refresh: the bar stays after an action (keepOpen) and shows what fits the selection now
-    window.LighthouseContent = { convertAllOnPage: () => convertAllOnPage(), point: { add: (range, context) => ranges.set(range, context), remove: (range) => ranges.delete(range) },
+    window.LighthouseContent = { convertAllOnPage: () => convertAllOnPage(), composer: currentComposer, send: sendToComposer, point: { add: (range, context) => ranges.set(range, context), remove: (range) => ranges.delete(range) },
         refresh: () => State.mode === 'LINK' ? State.send('link', { ctx: State.ctx, inPlace: true }) : selectionChanged('refresh') };
 
     // Every price and measurement in the page's text, in the user's currency and units: each value on its own,
@@ -104,6 +118,42 @@
         document.querySelectorAll('.lighthouse-converted').forEach(span => { const parent = span.parentNode; span.replaceWith(originals.has(span) ? originals.get(span).text : span.textContent); parent.normalize(); });
     }
 
+    // ---------- Send: the composer, the last multi-line box typed in on this page ----------
+    // { ref: the box, weakly (one the page removes goes with it), caret: rich text's when it was left (a textarea keeps its own) }
+    let composer = null;
+    function keepComposer(el) {
+        const sel = SelLib.getActiveSelection(), r = sel && sel.rangeCount && sel.getRangeAt(0);
+        composer = { ref: new WeakRef(el), caret: r && el.contains(r.startContainer) ? r.cloneRange() : null };
+    }
+    // The composer while it is on the page and shown, with the name the page gives it
+    function currentComposer() {
+        const el = composer && composer.ref.deref();
+        if (!el || !el.isConnected || !el.checkVisibility()) return null;
+        const name = el.getAttribute('aria-label') || el.getAttribute('placeholder') || (el.querySelector('[data-placeholder]') || el).getAttribute('data-placeholder');
+        return { el, label: name ? $.shorten(name.trim(), 32) : '' };
+    }
+    // Text into the composer where its caret was (rich text's kept, else at its end), as typed there: tidy joins, one undo
+    // step; the page stays (rich editors scroll to their caret). quote: lines of its own, each "> ", then one to write on
+    function sendToComposer(text, { quote = false } = {}) {
+        const target = currentComposer();
+        if (!target) return false;
+        const { el } = target, x = window.scrollX, y = window.scrollY;
+        let r = composer.caret && el.contains(composer.caret.startContainer) && composer.caret;
+        el.focus({ preventScroll: true });
+        if (el.tagName !== 'TEXTAREA') {
+            if (!r) { r = document.createRange(); r.selectNodeContents(el); r.collapse(false); }
+            SelLib.selectBetween({}, { node: r.startContainer, offset: r.startOffset }, { node: r.endContainer, offset: r.endOffset });
+        }
+        if (quote) {
+            const at = SelLib.surface(el).read({ before: 1 }), midLine = at && at.before && at.before !== '\n';
+            text = (midLine ? '\n' : '') + text.trimEnd().split(/\r?\n/).map(line => '> ' + line).join('\n') + '\n\n';
+        }
+        SelLib.insertText(el, text);
+        State.lastFocusedInput = el;   // already in it: its caret is no first click (no Paste bar over what was sent)
+        queueMicrotask(() => { if (window.scrollX !== x || window.scrollY !== y) window.scrollTo(x, y); });   // after the editor's own scroll
+        return true;
+    }
+
     function handleTextExpansion(e) {
         const el = e.target;
         if (UI.contains(el)) return;
@@ -123,12 +173,12 @@
             if (surface.precise) window.LighthouseAPI.getTools(SelLib.getContext()).replace(expansion, { smartIndent: true, startLineText, appendSpace, span: { before: { text } } });
             else surface.rewrite('all', ({ text: all }) => ({ text: all.slice(0, all.length - text.length) + expansion }));   // one edit: undo still works
         };
-        const isSpace = e.data === ' ', ends = isSpace || e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph';
+        const isSpace = e.data === ' ', ends = isSpace;   // Enter: the menu takes it (the bar's keys)
         const spaceInValue = isSpace && /\s$/.test(line);   // the browser trims it in some fields (email); rich text types a no-break space
         const trigger = typed.slice(2, spaceInValue ? -1 : undefined).trim();
         const shortcuts = State.get('shortcuts');
 
-        // Space or Enter after a whole trigger expands it
+        // Space after a whole trigger expands it
         if (ends) {
             const match = shortcuts.find(s => s.trigger === trigger);
             if (!match) return State.send('snippetsGone');
@@ -139,7 +189,11 @@
         // Part of one: the snippets it could be
         const matches = shortcuts.filter(s => s.trigger.startsWith(trigger));
         if (!matches.length) return State.send('snippetsGone');
-        State.send('snippets', { ctx: Object.assign(SelLib.getContext(), { text: typed, hasText: true }), actions: matches.slice(0, 4).map((match, i) => ({
+        // The strip says the keys, as Settings does: a whole name inserts with Space; Tab chooses (or inserts the one), Enter takes the pick
+        const shown = matches.slice(0, 4), whole = shown.some(m => '//' + m.trigger === typed);
+        const facts = () => State.pick >= 0 ? ['Enter to insert'] : whole ? ['Space to insert', ...(shown.length > 1 ? ['Tab to choose'] : [])]
+            : [shown.length > 1 ? 'Tab to choose' : 'Tab to insert'];
+        State.send('snippets', { ctx: Object.assign(SelLib.getContext(), { text: typed, hasText: true, facts }), actions: shown.map((match, i) => ({
             id: 'snippet-' + i, label: match.trigger, icon: 'chat', textOnly: true, keepOpen: false,
             execute: () => (expand(typed, match.expansion), { success: true }),
             preview: () => ({ node: $.create('div', { className: 'lh-snippet', text: match.expansion }) })

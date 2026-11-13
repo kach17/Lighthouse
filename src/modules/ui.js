@@ -41,7 +41,7 @@
                     el.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
                     btn.appendChild(el);
                 }
-                if (btn.matches(':hover')) placePopover(el);
+                if (btn.matches(':hover') || btn.classList.contains('is-picked')) placePopover(el);
             }, $.token('--so-popover-delay', 300));
         });
         btn.addEventListener('mouseleave', () => {
@@ -288,6 +288,7 @@
         }
 
         const buttons = shownButtons = activeActions.map(def => createButton(def, live, liveTools));
+        if (State.mode === 'SNIPPET_MENU') pick(State.pick);
         tooltipContainer.append(...buttons.slice(0, MAX_BUTTONS));
         if (buttons.length > MAX_BUTTONS) {
             const more = $.create('div', { className: 'lighthouse-btn', attrs: { role: 'button', tabindex: '0' },
@@ -478,18 +479,18 @@
     function updatePosition(ctx, inPlace = false) {
         if (!tooltipContainer || !ctx) return;
 
-        // Where the selection is drawn now; the pointer belongs to the selection the bar opened for.
-        // Links and a caret in a field: at the element. Page text drawn nowhere: at the pointer, or gone
-        const live = ctx.isLink || (ctx.isForm && !ctx.hasText) ? null : window.LighthouseSelection.current();
+        // Where the selection (or the caret: its line, in a plain field as in rich text) is drawn now; the pointer
+        // belongs to the selection the bar opened for. Links: at the element. Page text drawn nowhere: at the pointer, or gone
+        const live = ctx.isLink ? null : window.LighthouseSelection.current();
         let drawn = null;
         try { drawn = live && live.edges('painted'); } catch (e) { /* nothing to measure */ }
         const ends = ctx.hasText ? drawn : null, pointer = ctx.snapshot && ctx.snapshot.pointer;
-        let rect = !live || (ctx.isForm && !ends) ? ctx.element.getBoundingClientRect() : drawn && drawn.box;
+        let rect = !live ? ctx.element.getBoundingClientRect() : drawn && drawn.box;
         if (rect && live && !ctx.isForm && !rect.top && !rect.left && !rect.width) rect = pointer && { left: pointer.x, top: pointer.y, right: pointer.x, bottom: pointer.y, width: 0, height: 0 };
         if (!rect) return destroy();
 
         // Centered on the selection, on the edge nearer the pointer (or caret); one line: above.
-        // Chosen once per bar. Links and fields without a selection: at the element.
+        // Chosen once per bar. Links: at the element; a caret: above its line, at the pointer.
         let anchorLeft = pointer ? pointer.x : rect.left + rect.width / 2, prefer = 'top';
         if (!ctx.isLink && ctx.hasText && rect.width > 0) {
             const owner = ctx.snapshot || ctx;
@@ -613,17 +614,23 @@
         }
     }
     
-    function showToast(msg, type) {
-        if (!shadowRoot) return;
-        const existing = shadowRoot.querySelectorAll('.lighthouse-toast'); existing.forEach(e => e.remove());
-        const t = $.create('div', { className: `lighthouse-toast ${type || 'success'}`, text: msg });
-        shadowRoot.appendChild(t);
-        setTimeout(() => { t.classList.add('fade-out'); setTimeout(() => t.remove(), 300); }, 2000);
+    function showToast(msg, type) { if (shadowRoot) $.toast(msg, type, shadowRoot); }
+
+    // The snippet Tab or Enter takes, shown as a hovered button: its preview opens as hovering opens it, and the strip says the keys
+    function pick(index) {
+        shownButtons.forEach((b, i) => {
+            if ((i === index) === b.classList.contains('is-picked')) return;
+            b.classList.toggle('is-picked', i === index);
+            b.dispatchEvent(new Event(i === index ? 'mouseenter' : 'mouseleave'));
+        });
+        const ctx = window.LighthouseState.ctx;
+        if (strip && ctx && ctx.facts) { strip.facts = stripFacts(ctx); show(strip.facts, { fade: true }); }
     }
 
     window.LighthouseUI = { 
         init, 
         render, 
+        pick, 
         updatePosition, 
         destroy, 
         onDestroy: (cb) => destroyCallbacks.push(cb),

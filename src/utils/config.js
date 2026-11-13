@@ -26,23 +26,27 @@
     { id: 'reddit', name: 'Reddit', url: 'https://www.reddit.com/search/?q=%s', icon: 'reddit', enabled: false }
   ];
 
-  // Buttons a new bar starts without: rarely needed, on almost every selection, or a key does it (Backspace)
-  const OFF_BY_DEFAULT = ['stack', 'speak', 'marker', 'expand', 'qr', 'delete', 'clear', 'json_format', 'base64_decode', 'color_convert'];
+  // Buttons a new bar starts without: of little use to most people, or (Spelling) sending what you write to a server
+  const OFF_BY_DEFAULT = ['stack', 'spellcheck', 'math', 'json_format', 'base64_decode', 'color_convert'];
+  // The order a new bar starts in; an action not listed (a new one) comes after
+  const ORDER = ['copy', 'send', 'stack', 'search', 'translate', 'dictionary', 'wikipedia', 'speak', 'marker', 'expand', 'qr', 'cut', 'paste',
+    'translate_to', 'delete', 'clear', 'spellcheck', 'math', 'currency', 'reminder', 'json_format', 'base64_decode', 'color_convert', 'unit', 'case'];
+  const ids = actionsList.map(a => a.id);
   // Every setting, declared once: its default, and the values it can take (options), so every reader
   // gets the same default and an imported file can only set what exists, with a value of the right kind
   const SETTINGS = {
     smartSnapping:  { default: true },    // selections snap to whole words
     addDragHandles: { default: true },
     tidySpacing:    { default: true },    // fix spaces and punctuation when deleting, cutting or pasting
-    showLabels:     { default: true },    // false: icon-only buttons
+    showLabels:     { default: false },   // icon-only buttons: the strip names what's pointed at
     linkPreviews:   { default: false },   // opt-in: fetching the hovered page needs a permission the user grants
     brackets:       { default: 'wrap', options: ['off', 'wrap', 'close'] },   // wrap a selection; close: also auto-close
     highlightColor: { default: 'yellow', options: (global.LighthouseData && global.LighthouseData.HIGHLIGHT_COLORS) || ['yellow'] },   // the last color used
     themeMode:      { default: 'light', options: ['light', 'dark'] },
     customStyles:   { default: '' },      // the theme as CSS, as edited in Settings
     standards:      { default: { units: 'metric', currency: 'USD', language: defaultLanguage, writeLanguage: '' } },   // writeLanguage: Translate to's, '' until chosen
-    order:          { default: actionsList.map(a => a.id) },
-    enabled:        { default: Object.fromEntries(actionsList.map(a => [a.id, !OFF_BY_DEFAULT.includes(a.id)])) },
+    order:          { default: [...ORDER.filter(id => ids.includes(id)), ...ids.filter(id => !ORDER.includes(id))] },
+    enabled:        { default: Object.fromEntries(ids.map(id => [id, !OFF_BY_DEFAULT.includes(id)])) },
     searchEngines:  { default: DEFAULT_SEARCH_ENGINES },
     blacklist:      { default: [] },      // sites where Lighthouse is off
     shortcuts:      { default: [] }       // snippets: { trigger, expansion }

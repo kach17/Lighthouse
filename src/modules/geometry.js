@@ -58,7 +58,12 @@
     function rangeEnd(source, atStart) {
         const range = source.cloneRange();
         range.collapse(atStart);
-        const rect = range.getBoundingClientRect();
+        let rect = range.getBoundingClientRect();
+        // A caret the browser reports nowhere (an empty paragraph: 0, 0): the element at it, its line break
+        if (!rect.x && !rect.y && !rect.height) {
+            const n = range.startContainer, at = n.nodeType === 1 ? n.childNodes[range.startOffset] || n : n.parentElement;
+            rect = (at.nodeType === 1 ? at : at.parentElement).getBoundingClientRect();
+        }
         let dy = rect.y, lineHeight = rect.height;
         if (rect.height > 0) {
             const node = range.startContainer;
@@ -197,7 +202,13 @@
     // (Highlight: the text without edge whitespace). null when there is nothing to measure.
     function edges(snap, kind = 'painted') {
         if (snap.field) {   // the box: from end to end, the field's width once the selection wraps
-            const { start, end } = fieldEnds(snap.field, snap.offsets[0], snap.offsets[1]), f = snap.field.getBoundingClientRect();
+            // A line break at an end (begun past a line's end, a whole line taken) lies on no line of the text: the
+            // ends are measured at the text, as page text is (measureExtent)
+            let [from, to] = snap.offsets;
+            const v = snap.field.value, text = v.slice(from, to), lead = text.search(/[^\r\n]/);
+            if (lead > 0) from += lead;
+            if (lead >= 0) to -= text.length - text.replace(/[\r\n]+$/, '').length;
+            const { start, end } = fieldEnds(snap.field, from, to), f = snap.field.getBoundingClientRect();
             const wraps = end.dy - start.dy > start.lineHeight / 2, left = wraps ? f.left : start.dx, right = wraps ? f.right : end.dx;
             const top = Math.max(f.top, start.dy), bottom = Math.min(f.bottom, end.dy + end.lineHeight);
             return { start, end, box: { left, right, top, bottom, width: right - left, height: bottom - top } };
@@ -205,7 +216,10 @@
         if (!snap.range) return null;
         const ext = extent(snap.range, kind === 'painted');
         const range = ext ? ext.range : snap.range;
-        return { start: rangeEnd(range, true), end: rangeEnd(range, false), box: ext ? ext.box : range.getBoundingClientRect(), range };
+        const start = rangeEnd(range, true), end = rangeEnd(range, false);
+        // A caret: its line
+        const box = ext ? ext.box : range.collapsed ? { left: start.dx, right: start.dx, top: start.dy, bottom: start.dy + start.lineHeight, width: 0, height: start.lineHeight } : range.getBoundingClientRect();
+        return { start, end, box, range };
     }
 
     window.LighthouseGeometry = { edges, pointAt, release };

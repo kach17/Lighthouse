@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lighthouse",
-  "version": "1.3",
+  "version": "1.4",
   "description": "A lightweight, modular text selection tooltip extension.",
   "minimum_chrome_version": "120",
   "permissions": [

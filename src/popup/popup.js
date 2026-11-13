@@ -366,16 +366,24 @@
 
     function renderSnippets() {
         const list     = document.getElementById('shortcuts-list');
-        const empty    = document.getElementById('shortcuts-empty');
-        const hint     = document.getElementById('shortcuts-hint');
         const snippets = currentState.shortcuts;
         list.innerHTML = '';
-        empty.hidden = snippets.length > 0;
-        hint.hidden  = snippets.length === 0;
+        // At the top, as on the other tabs: what to do first, then (with snippets) how to use them
+        document.getElementById('shortcuts-desc').textContent = snippets.length
+            ? 'Type //name and Space to insert. Click one to copy.'
+            : 'Save text you type often, then type //name and Space to insert it anywhere.';
 
+        // A snippet copies its text when clicked (for where typing it can't reach: other apps, Google Docs, sites
+        // where Lighthouse is off), with the bar's own Copied toast
         snippets.forEach((s, index) => {
+            const copy = () => navigator.clipboard.writeText(s.expansion).then(() => $.toast('Copied'), () => $.toast('Couldn’t copy', 'error'));
             list.appendChild($.create('li', {
-                className: 'lh-row p-static',
+                className: 'lh-row',
+                attrs: { tabindex: '0', role: 'button', 'aria-label': `Copy //${s.trigger}` },
+                events: {
+                    click: (e) => { if (!e.target.closest('.lh-row-delete')) copy(); },
+                    keydown: (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); copy(); } }
+                },
                 children: [
                     $.create('span', { className: 'lh-row-mono', text: '//' + s.trigger }),
                     $.create('span', { className: 'lh-row-sub', text: s.expansion }),

@@ -104,9 +104,12 @@
 
     // The context actions read, with the snapshot. pointer (optional): the event that made the selection
     function getContext(pointer = null) {
-        const el = window.LighthouseInput.focusedElement(), { isForm, isEditable } = isEditableElement(el), isInput = isForm || isEditable;
-        const s = surface(el), selected = s.read(), all = isInput && s.read('all');
-        const text = sanitizeText(selected ? selected.text : '');
+        // A field only where Lighthouse can change the selection (not across lines in rich text): elsewhere it is read like page text
+        const el = window.LighthouseInput.focusedElement(), { isForm, isEditable } = isEditableElement(el), s = surface(el);
+        const isInput = (isForm || isEditable) && s.writable, selected = s.read(), all = isInput && s.read('all');
+        // What actions get: where Lighthouse doesn't edit (page text, across lines in rich text), the text as the browser
+        // reads it, with the line breaks between paragraphs and list items (read for positions, they run together)
+        const text = sanitizeText(selected ? (!s.writable && String(getActiveSelection() || '')) || selected.text : '');
         return { text, isInput, isForm, isEditable, hasText: !!text, element: isInput ? el : null,
             isEmptyInput: !!all && !/\S/.test(all.before + all.text + all.after),
             snapshot: snapshot(el, isForm, s, selected, text, pointer) };
@@ -200,16 +203,6 @@
         return { left: left.slice(0, i) + L, right: tail, back };
     }
 
-    // Rich text, after a deletion: a caret between a space and a word goes to the previous word's end (true if it moved)
-    function caretToWordEnd(el) {
-        const sel = getActiveSelection(), r = sel && sel.isCollapsed && sel.rangeCount && sel.getRangeAt(0);
-        if (!r || !el.contains(r.startContainer)) return;
-        const x = document.createRange(), side = (start) => { x.selectNodeContents(el); start ? x.setStart(r.startContainer, r.startOffset) : x.setEnd(r.startContainer, r.startOffset); return x.toString(); };
-        if (!/[^\S\r\n]$/.test(side(false)) || !isWord(side(true)[0])) return;
-        sel.modify('move', 'backward', 'character');
-        owe(el);
-    }
-
     // ---------- Surface: the text where the user is, read and changed one way ----------
     // A surface reads the text around its selection and rewrites it as one undoable edit, the same
     // way in plain fields, rich text and fields that hide their caret (email, number). A span says how
@@ -270,7 +263,11 @@
 
     // Rich text (and page text, read only): positions within the line around a point, in the same
     // characters Range.toString() counts, so what is read and what is selected always agree
-    function lineAt(root, node, offset) {
+    function lineAt(root, node, offset, atEnd = false) {
+        // A point on an element's edge (a select-all, a drag ended past a paragraph) belongs to the text beside it:
+        // after it for a start, before it for an end
+        for (let child; node.nodeType === 1 && (child = node.childNodes[atEnd ? offset - 1 : offset]) && (child.nodeType === 3 || child.firstChild);)
+            [node, offset] = [child, atEnd ? (child.nodeType === 3 ? child.length : child.childNodes.length) : 0];
         let block = node.nodeType === 1 ? node : node.parentNode;
         while (block && block !== root && !(block.matches && block.matches(LINE_EDGES))) block = block.parentNode;
         if (!block) block = root;
@@ -313,7 +310,7 @@
                     if (!cap) return '';
                     const [n, o] = atStart ? [r.startContainer, r.startOffset] : [r.endContainer, r.endOffset];
                     if (cap === Infinity) { const x = document.createRange(); x.selectNodeContents(root); if (atStart) x.setEnd(n, o); else x.setStart(n, o); return x.toString(); }
-                    const line = lineAt(root, n, o), i = line.indexOf(n, o);
+                    const line = lineAt(root, n, o, !atStart), i = line.indexOf(n, o);
                     return atStart ? line.text.slice(Math.max(0, i - cap), i) : line.text.slice(i, i + cap);
                 };
                 return { before: side(true, capB), text: r.toString(), after: side(false, capA) };
@@ -321,20 +318,37 @@
             shift(dStart, dEnd) {
                 const r = range();
                 if (!r) return;
-                const a = lineAt(root, r.startContainer, r.startOffset), b = lineAt(root, r.endContainer, r.endOffset);
-                setRange(a.pointAt(a.indexOf(r.startContainer, r.startOffset) + dStart), b.pointAt(b.indexOf(r.endContainer, r.endOffset) + dEnd));
+                // Only an end that moves is measured: one that stays may lie where no line has text (a drag ended
+                // in the empty space below), and stays exactly where it is
+                const end = (n, o, d, atEnd) => { if (!d) return { node: n, offset: o }; const line = lineAt(root, n, o, atEnd); return line.pointAt(line.indexOf(n, o) + d); };
+                setRange(end(r.startContainer, r.startOffset, dStart, false), end(r.endContainer, r.endOffset, dEnd, true));
+            },
+            // Whether the selection lies within one line (rich text is read one line at a time): the start's line holds its end
+            inOneLine() {
+                const r = range(), line = r && !r.collapsed && lineAt(root, r.startContainer, r.startOffset);
+                return !line || line.indexOf(r.endContainer, r.endOffset) <= line.text.length;
             },
             selectAll: () => selectNode(root),
-            insert: writable ? (str) => document.execCommand('insertText', false, str) : null
+            // Lines: handed to the editor as a paste, which every rich editor turns into its own paragraphs (inserted
+            // text keeps only its first line in some: Lexical). An element no editor runs takes them as typed
+            insert: writable ? (str) => {
+                if (!str) return document.execCommand('delete');
+                if (str.includes('\n')) {
+                    const data = new DataTransfer(); data.setData('text/plain', str);
+                    if (!root.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))) return;
+                }
+                document.execCommand('insertText', false, str);
+            } : null
         };
     }
 
     /**
      * The surface for an element (default: the focused one), or for the page selection.
      *   precise   false where the caret can't be read (email, number): only the selection or 'all'
-     *   writable  false for page text, which Lighthouse never changes
+     *   writable  false for page text, which Lighthouse never changes, and for a selection across lines in rich
+     *             text, which is read one line at a time: the editor changes it, its own way
      *   multiline whether line breaks belong (a textarea or rich text; not a one-line input)
-     *   tidies    whether Lighthouse adjusts spacing around edits (plain fields; rich editors keep their own)
+     *   tidies    whether Lighthouse tidies pasted text itself (plain fields; rich editors paste their own way)
      *   sharesContext  whether the sentence around a selection may be sent for spelling (plain fields)
      *   structured     whether there are elements to grow a selection into (page and rich text)
      *   read(span)                   → { before, text, after }, or null where the span isn't there
@@ -348,10 +362,10 @@
         const kindOf = window.LighthouseInput.fieldKind(el);
         const kind = kindOf === 'form' ? 'field' : kindOf === 'editable' ? 'editable' : 'page';
         const precise = kind !== 'field' || window.LighthouseInput.hasOffsets(el);
-        const writable = kind !== 'page';
         const multiline = kind !== 'field' || el.tagName === 'TEXTAREA';
         const tidies = kind === 'field' && precise, sharesContext = tidies, structured = kind !== 'field';
-        const backend = kind === 'field' ? fieldBackend(el) : domBackend(kind === 'editable' ? el : document.body, writable);
+        const backend = kind === 'field' ? fieldBackend(el) : domBackend(kind === 'editable' ? el : document.body, kind !== 'page');
+        const writable = kind === 'field' || (kind === 'editable' && backend.inOneLine());
         const sides = (span) => {
             if (!span) return [0, 0];
             if (span === 'all') return ['all', 'all'];
@@ -400,8 +414,11 @@
             while (low(was, p) || low(now, p)) p--;
             while (q > 0 && (low(was, was.length - q) || low(now, now.length - q))) q--;
 
-            const middle = now.slice(p, now.length - q);
             const selStart = old.before.length, selEnd = selStart + old.text.length;
+            // Rich text, only the selection replaced: over the selection as it is. An editor (Lexical) types into the
+            // selection it last saw, so one narrowed just before the edit would go unseen
+            if (kind === 'editable' && old.text && next.before === old.before && next.after === old.after) { p = selStart; q = was.length - selEnd; }
+            const middle = now.slice(p, now.length - q);
             if (was !== now) {
                 backend.shift(p - selStart, (was.length - q) - selEnd);
                 backend.insert(middle);
@@ -412,7 +429,11 @@
             const at = p + middle.length, textStart = next.before.length, textEnd = textStart + next.text.length;
             const [from, to] = caret === 'select' ? [textStart, textEnd]
                 : typeof caret === 'number' ? [textEnd + caret, textEnd + caret] : [textEnd, textEnd];
-            if (from !== at || to !== at) backend.shift(from - at, to - at);
+            // Rich editors (Lexical) apply their own update for an edit after it, putting the caret back: there it moves then
+            if (from !== at || to !== at) {
+                if (kind === 'editable') queueMicrotask(() => backend.shift(from - at, to - at));
+                else backend.shift(from - at, to - at);
+            }
             return true;
         }
 
@@ -440,12 +461,14 @@
                 const m = selected.match(/^(\s*)(.*?)(\s*)$/s);
                 return { text: m[1] + text + m[2] + WRAP_PAIRS[text], after: m[3] + after };
             }
-            if (!finalText) {   // a deletion leaves one join (plain fields; rich editors keep their own)
-                const t = s.tidies && tidySeam(before, after, selected, false);
+            if (!finalText) {   // a deletion leaves one join
+                const t = tidySeam(before, after, selected, false);
                 if (!t) return { text: '' };
                 tidied = t.back > 0 || t.left + t.right !== before + after;
                 return { before: t.left, text: '', after: t.right, caret: -t.back };
             }
+            // Between two letters of a word (s|ma|ll) new text joins the word: no joins to tidy
+            if (isWord(before[before.length - 1]) && isWord(after[0])) return { text: finalText, caret: options.select ? 'select' : 'end' };
             // New text makes two joins, each tidied the same way; only the ends near a join are read
             const near = 2 * SEAM_REACH, join = (l, r) => {
                 const k = Math.max(0, l.length - near), t = tidySeam(l.slice(k), r.slice(0, near), '', true);
@@ -461,8 +484,7 @@
             if (options.select) caret = 'select';
             return { before: two.left.slice(0, kept), text: finalText, after: two.right, caret };
         });
-        if (tidied) owe(el);
-        else if (!text && !s.tidies) caretToWordEnd(el);
+        if (tidied) queueMicrotask(() => owe(el));   // once the caret is placed (rich text: rewrite)
     }
 
     // The owed space: when a deletion takes a space away, a word typed next at that caret gets it back first
@@ -551,6 +573,8 @@
             const order = r.comparePoint(q.node, q.offset);
             const [a, b] = order < 0 ? [q, p] : [p, q];
             window.getSelection().setBaseAndExtent(a.node, a.offset, b.node, b.offset);
+            // In rich text, announced at once (the browser does only later): an editor acts on the selection it last heard of
+            if ((a.node.nodeType === 1 ? a.node : a.node.parentElement).isContentEditable) document.dispatchEvent(new Event('selectionchange'));
             return order;
         } catch (e) {
             return null;
@@ -614,7 +638,6 @@
         isCurrent,
         current,
         getActiveSelection,
-        caretToWordEnd,
         payOwed,
         getLinkContext,
         insertText,

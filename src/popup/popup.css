@@ -38,10 +38,9 @@ body.lh-popup {
 
 
 
-.lh-add-trigger { margin-top: var(--so-space-3); }
+.lh-add-trigger { margin-top: var(--so-space-3); position: sticky; bottom: 0; background: var(--so-surface); }   /* in reach once a list outgrows the popup */
 
 /* Snippets: the hint under a list; the name field with its fixed "//" block */
-.p-hint { padding-top: var(--so-space-4); }
 .p-prefix-field { display: flex; }
 .p-prefix {
   display: flex; align-items: center; padding: 0 var(--so-space-4); flex: none;

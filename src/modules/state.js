@@ -104,6 +104,7 @@
                     this.ctx = data.ctx;
                     this.mode = 'SNIPPET_MENU';
                     this.activeActions = data.actions;
+                    this.pick = -1;   // none until Tab picks one (content.js)
                     fx.show(false);
                     return;
                 case 'snippetsGone':

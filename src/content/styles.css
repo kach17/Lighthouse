@@ -70,7 +70,7 @@
   font: inherit; white-space: nowrap; cursor: pointer;
   transition: background-color var(--so-duration) var(--so-ease);
 }
-.lighthouse-btn:hover { background: var(--so-level-hover); }
+.lighthouse-btn:hover, .lighthouse-btn.is-picked { background: var(--so-level-hover); }   /* is-picked: the snippet Tab or Enter takes */
 .lighthouse-btn:active { background: var(--so-level-engaged); }
 /* The thread: a button with its popover open is made of the popover's tone */
 .lighthouse-btn:has(> .lighthouse-popover.visible) { background: var(--so-level-engaged); }

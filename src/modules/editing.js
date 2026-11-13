@@ -2,12 +2,16 @@
  * Lighthouse - Smart Editing
  *
  * Small corrections while editing text fields, each switchable in Settings:
- *   Tidy spacing        fix spaces and punctuation when deleting, cutting or pasting
+ *   Tidy spacing        fix spaces and punctuation when deleting, cutting, pasting or typing over a selection
  *   Brackets and quotes 'off' | 'wrap' (wrap a selection) | 'close' (wrap, and auto-close brackets)
  *
  * Everything runs through the input manager (input.js), so password fields, text being
- * composed, command shortcuts, sites where Lighthouse is off and editors that manage
- * their own text are all excluded in one place.
+ * composed, command shortcuts, sites where Lighthouse is off and the hidden fields code
+ * editors type through are all excluded in one place.
+ *
+ * Brackets work in every editor, rich text included, but only where the editor leaves the key
+ * alone: they act on beforeinput, which comes only for a key no editor has taken, so an editor
+ * that pairs brackets itself (a code editor, a notes app) keeps its own behavior.
  */
 (function (global) {
     const Input = global.LighthouseInput;
@@ -35,54 +39,40 @@
         const done = () => { if (onEdit) onEdit(); };
 
         // The owed space (selection.js), paid by the next keystroke; the key itself is typed as usual. Shift alone keeps it, for a capital
-        Input.on({ type: 'keydown', scope: 'editable', typingHelper: true, inManagedEditors: true,
+        Input.on({ type: 'keydown', scope: 'editable', typingHelper: true, inProxyFields: true,
             handler(e, { target: el }) { if (!e.getModifierState(e.key)) Sel.payOwed(el, e); return false; } });
 
-        // Brackets and quotes: wrap a selection, auto-close, step over, paired delete
+        // Brackets: our own pair. Its closer typed steps over it; Backspace inside it, empty, removes both
         Input.on({
-            type: 'keydown', scope: 'editable', typingHelper: true,
-            keys: [...Object.keys(WRAP_PAIRS), ...CLOSERS, 'Backspace'],
+            type: 'keydown', scope: 'editable', typingHelper: true, keys: [...CLOSERS, 'Backspace'],
             handler(e, { target: el }) {
-                const mode = bracketsMode();
-                if (mode === 'off') return false;
-                const surface = Sel.surface(el), pair = closerAtCaret(el);
+                const pair = bracketsMode() !== 'off' && closerAtCaret(el);
+                if (!pair) return false;
+                if (e.key === autoClosed.closer) Sel.surface(el).select({ after: 1 }, 'end');
+                else if (e.key === 'Backspace' && AUTO_CLOSE[pair.before] === autoClosed.closer) Sel.surface(el).rewrite({ before: 1, after: 1 }, () => ({ before: '', after: '' }));
+                else return false;
+                e.preventDefault();
+                autoClosed = null;
+                return true;
+            }
+        });
 
-                // Step over a closing bracket we just inserted
-                if (pair && e.key === autoClosed.closer) {
-                    e.preventDefault();
-                    surface.select({ after: 1 }, 'end');
-                    autoClosed = null;
-                    return true;
-                }
-
-                // Backspace inside an empty auto-closed pair removes both
-                if (e.key === 'Backspace') {
-                    if (!pair || AUTO_CLOSE[pair.before] !== autoClosed.closer) return false;   // plain Backspace: tidy spacing or the browser
-                    e.preventDefault();
-                    surface.rewrite({ before: 1, after: 1 }, () => ({ before: '', after: '' }));
-                    autoClosed = null;
-                    return true;
-                }
-
-                if (!WRAP_PAIRS[e.key]) return false;
-
-                // Wrap a selection (a deliberate act, so on by default)
-                if (Input.hasSelection()) {
-                    e.preventDefault();
-                    Sel.insertText(el, e.key);
-                    autoClosed = null;
-                    done();
-                    return true;
-                }
-
-                // Auto-close brackets (changes ordinary typing, so opt-in): the caret goes inside the pair
-                if (mode === 'close' && AUTO_CLOSE[e.key]) {
-                    e.preventDefault();
-                    surface.rewrite(null, () => ({ text: e.key + AUTO_CLOSE[e.key] }), { caret: -1 });
-                    autoClosed = { el, closer: AUTO_CLOSE[e.key] };
-                    return true;
-                }
-                return false;
+        // A character typed where no editor has taken the key (only then is there a beforeinput). Over a selection,
+        // Lighthouse types it when it wraps (brackets and quotes) or replaces a space (tidy spacing: "small " →
+        // "big noodles"); with none, an opening bracket closes itself (close mode, opt-in: it changes ordinary typing)
+        Input.on({
+            type: 'beforeinput', scope: 'editable', typingHelper: true,
+            handler(e, { target: el }) {
+                const key = e.inputType === 'insertText' && e.data, mode = bracketsMode();
+                if (!key || [...key].length !== 1) return false;
+                const s = Sel.surface(el), selected = Input.hasSelection() && s.read();
+                if (!s.writable) return false;   // across lines in rich text: the editor's
+                if (selected ? !((mode !== 'off' && WRAP_PAIRS[key]) || (tidySpacing() && /^\s|\s$/.test(selected.text)))
+                    : !(mode === 'close' && AUTO_CLOSE[key])) return false;
+                e.preventDefault();
+                if (selected) { Sel.insertText(el, key); autoClosed = null; done(); }
+                else { Sel.surface(el).rewrite(null, () => ({ text: key + AUTO_CLOSE[key] }), { caret: -1 }); autoClosed = { el, closer: AUTO_CLOSE[key] }; }
+                return true;
             }
         });
 
@@ -97,12 +87,9 @@
 
         // Tidy spacing: deleting a selection
         Input.on({
-            type: 'keydown', scope: 'editable', typingHelper: true, keys: ['Backspace', 'Delete'], inManagedEditors: true,
+            type: 'keydown', scope: 'editable', typingHelper: true, keys: ['Backspace', 'Delete'],
             handler(e, { target: el }) {
-                if (!tidySpacing() || !Input.hasSelection()) return false;
-                const surface = Sel.surface(el);
-                // Rich text: the browser or editor deletes; only the caret is placed afterwards
-                if (!surface.tidies) { setTimeout(() => Sel.caretToWordEnd(el)); return false; }
+                if (!tidySpacing() || !Input.hasSelection() || !Sel.surface(el).writable) return false;   // across lines in rich text: the editor's
                 e.preventDefault();
                 Sel.insertText(el, '');
                 done();
@@ -114,7 +101,7 @@
         Input.on({
             type: 'keydown', scope: 'editable', typingHelper: true, keys: ['x', 'X'], withCommand: true,
             handler(e, { target: el }) {
-                if (!tidySpacing() || !Input.hasSelection() || !Sel.surface(el).tidies) return false;   // rich editors cut their own way
+                if (!tidySpacing() || !Input.hasSelection() || !Sel.surface(el).writable) return false;
                 e.preventDefault();
                 document.execCommand('copy');
                 Sel.insertText(el, '');

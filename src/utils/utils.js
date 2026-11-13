@@ -26,6 +26,13 @@
       if (body) card.appendChild(make('div', { className: 'lh-card-body', text: body }));
       return card;
     },
+    /** A short message (type 'success' or 'error') at the bottom of `root`, gone after 2 s; one at a time */
+    toast(msg, type, root = document.body) {
+      root.querySelectorAll('.lighthouse-toast').forEach(e => e.remove());
+      const t = window.LighthouseUtils.create('div', { className: `lighthouse-toast ${type || 'success'}`, text: msg });
+      root.appendChild(t);
+      setTimeout(() => { t.classList.add('fade-out'); setTimeout(() => t.remove(), 300); }, 2000);
+    },
     /**
      * DOM Creator Helper
      */

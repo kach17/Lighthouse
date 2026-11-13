@@ -315,6 +315,20 @@
             }
         },
         {
+            id: 'send',
+            label: 'Send',
+            category: 'selection',
+            icon: 'send',
+            // Into the composer: the last multi-line box typed in on this page, unless the selection is in it
+            condition: (ctx) => {
+                const box = ctx.hasText && ctx.tools.composer(), range = ctx.snapshot && ctx.snapshot.range;
+                return !!box && !(range && box.el.contains(range.commonAncestorContainer));
+            },
+            info: (ctx, tools) => { const box = tools.composer(); return box && (box.label ? `Into ${box.label}` : 'Into the last text box'); },
+            execute: (ctx, tools) => tools.send(ctx.text) ? { success: true, message: 'Sent' } : { success: false, message: 'The text box is gone' },
+            preview: (ctx, tools) => ({ items: [{ label: 'Send as quote', icon: 'quote', onClick: () => { if (tools.send(ctx.text, { quote: true })) tools.toast('Sent'); } }] })
+        },
+        {
             id: 'search',
             label: 'Search',
             category: 'selection',

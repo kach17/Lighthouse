@@ -44,14 +44,16 @@
     };
     const TYPING_EVENTS = new Set(['keydown', 'keyup', 'beforeinput', 'input', 'paste']);
 
-    // Editors that manage their own text: typing helpers step aside here unless a
-    // subscription explicitly opts in (e.g. snippet detection).
-    const MANAGED_EDITORS = [
-        '.cm-editor', '.CodeMirror', '.monaco-editor', '.ace_editor',   // code editors
-        '.ProseMirror', '[data-lexical-editor]', '[data-slate-editor]', // rich-text frameworks
-        '.ql-editor', '.DraftEditor-root', '.ck-editor__editable', '.tox-edit-area',
-        '.notion-page-content', '[data-content-editable-leaf]'          // Notion
-    ].join(',');
+    // Where typing helpers step aside unless a subscription opts in, known by what it is, so no editor needs naming:
+    // a proxy, a field the user doesn't see that an editor types through and draws elsewhere (Monaco, Ace, CodeMirror 5),
+    // hidden or a few pixels; or an editor the page marks as not prose, spellcheck and autocorrect off (CodeMirror 6)
+    function isProxyField(el) {
+        if (!el || !el.getAttribute) return false;
+        if (el.spellcheck === false && el.getAttribute('autocorrect') === 'off') return true;
+        if (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') return false;
+        const box = el.getBoundingClientRect();
+        return box.width <= 4 || box.height <= 4 || !el.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+    }
 
     // The one definition of "a text field". Controls that never hold free text (pickers included), and password fields:
     const NON_TEXT_CONTROLS = ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio',
@@ -131,7 +133,7 @@
         if (scopes.includes('editable') && fieldKind(target)) {
             // From a text field: the field rules apply
             if (isInsideExtension(target)) return false;
-            if (!sub.inManagedEditors && target.closest && target.closest(MANAGED_EDITORS)) return false;
+            if (!sub.inProxyFields && isProxyField(target)) return false;
         } else if (!scopes.some(sc => sc !== 'editable' && activeScopes.has(sc))) {
             // Not from a field: needs another of its scopes to be active
             return false;
@@ -201,7 +203,11 @@
             if (sub.type !== e.type || !accepts(sub, e, target)) continue;
             if (owner === 'bar' && scopesOf(sub).includes('page')) continue;   // a press on the bar is not the page's
             // A handler returns true when it has handled the event; later ones are skipped
-            if (sub.handler(e, { target }) === true) break;
+            if (sub.handler(e, { target }) === true) {
+                // A key Lighthouse acted on: the page doesn't act on it again (Lexical would, on both)
+                if ((e.type === 'keydown' || e.type === 'beforeinput') && e.defaultPrevented) e.stopPropagation();
+                break;
+            }
         }
         // The page hears every event, except those of a press the user owns
         if (owner === 'user' && (e.type !== 'click' || e.defaultPrevented)) e.stopPropagation();
@@ -246,6 +252,7 @@
     }
     document.addEventListener('focusin', onFocusChange, true);
     document.addEventListener('focusout', () => setTimeout(onFocusChange, 0), true);
+    onFocusChange();   // a field focused before Lighthouse loaded (some sites focus their input as the page loads) sends no focusin
 
     // ---------- Public API ----------
 
@@ -257,7 +264,7 @@
          *   keys:             optional list of e.key values to match
          *   withCommand:      require Ctrl/Cmd (e.g. Ctrl+X)
          *   allowRepeat:      also receive automatic key repeats
-         *   inManagedEditors: also run inside editors that manage their own text
+         *   inProxyFields:    also run where typing helpers step aside (isProxyField)
          *   typingHelper:     changes what is typed, so not in structured fields (email, url...)
          *   afterSelecting:   only when text is selected and the key press didn't move focus or edit
          *   handler(e, info): return true when the event was handled

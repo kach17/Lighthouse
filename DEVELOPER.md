@@ -25,6 +25,8 @@ Each step is isolated. `state.js` doesn't touch the DOM. `ui.js` doesn't know ab
 
 Every event enters through `input.js`, which also decides who a press belongs to, once, as it begins: the bar's (a press on Lighthouse, heard only by its own `bar` and `drag` scopes), the user's (one begun holding Alt: anything can be selected, and the page neither hears the press nor acts on it) or the page's. Snapping is decided at release instead: with Alt down then, the selection stays exactly as dragged. Handlers never check where a press came from; they only receive the ones that are theirs.
 
+Typing helpers step aside, unless a subscription opts in (`inProxyFields`), where no text is typed as prose: a proxy (a hidden or few-pixel field an editor types through and draws elsewhere: Monaco, Ace, CodeMirror 5) or an editor marked as not prose (spellcheck and autocorrect off: CodeMirror 6). Both are known by what they are (`isProxyField`), so no editor is named. A key or `beforeinput` a handler acts on (prevents and returns `true`) isn't heard by the page after it: Lexical would act on it again. The focused field is checked once at load as well: a page that focuses its input as it loads sends no `focusin`.
+
 ---
 
 ## Files
@@ -72,7 +74,7 @@ The bar's state machine is in `state.js`: every change is a named event, `State.
 | `SMART` | Text selected and a parser matched (math, currency, date, color, JSON, base64) |
 | `INPUT` | A field: text selected in it, or the first click into it |
 | `LINK` | A bar for something on the page: an external link pointed at; a value Convert page changed (what it was, Undo all); a highlight pointed at (Clear highlight); the text being read aloud (Pause, Speed, Stop: while reading, this bar returns whenever no other is shown). A context with `buttons` gets those. Selection changes never close it |
-| `SNIPPET_MENU` | User typed `//` and matching shortcuts exist |
+| `SNIPPET_MENU` | User typed `//` and matching shortcuts exist. Tab takes the only one, or picks among several (again: the next, Shift: back) and ← → then move the pick; Enter takes the pick, or a whole name. Until a pick, arrows and Enter are the text's. A pick looks and previews as hovering does; the strip says the keys |
 | `DRAGGING` | A handle is being dragged: no bar; the drag owns the selection |
 
 `State.acting` is on while a keep-open action runs (Case); `State.busy` (acting or dragging) means no new selection is read. `State.orderActions(candidates, matched)` is the one ordering: content-matched actions first, then the user's order.
@@ -126,6 +128,7 @@ Each exists once; use it rather than writing another.
 | Words or sentences | `LighthouseUtils.segmenter('word' \| 'sentence')` |
 | A token in JavaScript (px, ms) | `LighthouseUtils.token('--so-duration', 200)` |
 | Shorten text for display | `LighthouseUtils.shorten(text, max)` |
+| A short message (Copied) | `LighthouseUtils.toast(msg, type, root)`: the bar's in its shadow root, Settings' in its page |
 | Show something on screen | `LighthouseUtils.frame.draw(key, fn)`: runs in the next frame; `frame.cancel(key)` when hiding |
 | The page selection | `LighthouseSelection.getActiveSelection()` |
 | Where the selection is drawn | `LighthouseSelection.current().edges('painted')` (handles, the bar) or `edges('content')` (Highlight); `LighthouseGeometry` underneath |
@@ -152,7 +155,7 @@ Only `page.css` is injected into web pages; everything else is `styles.css` in t
 
 `getContext()` also attaches `ctx.snapshot`: the selection frozen at that moment (`text` as selected, `cleanText`, `field` and `offsets` or a copy of the `range`, `caret`, `backward`, `pointer`) with two live parts, `edges(kind)`, measured against the current layout, and `language`, a promise decided once. Its `id` stays the same while the selection does. Nothing writes to it.
 
-Two questions, two snapshots. *Where is the selection now* (handles, positioning, Highlight): `LighthouseSelection.current()`, the snapshot of the live selection, the same object while it is unchanged, so a keep-open action that changes the selection (Expand) is followed. *Which bar is this* (the pointer it opened at, the side it took): `ctx.snapshot`, the one the pipeline read. Choose the kind of surface by `snapshot.field` (set only for plain fields), not by `ctx.isInput`, which is also true for rich editors.
+Two questions, two snapshots. *Where is the selection now* (handles, positioning, Highlight): `LighthouseSelection.current()`, the snapshot of the live selection, the same object while it is unchanged, so a keep-open action that changes the selection (Expand) is followed. *Which bar is this* (the pointer it opened at, the side it took): `ctx.snapshot`, the one the pipeline read. Choose the kind of surface by `snapshot.field` (set only for plain fields), not by `ctx.isInput`, which is also true for rich editors. `isInput` is true only where Lighthouse can change the selection: across lines in rich text it is false, and the bar offers what it offers for page text. There `ctx.text` is the selection as the browser reads it, with the line breaks between paragraphs and list items; read for positions (the snapshot's `text`), they run together.
 
 
 `LighthouseAPI.prepareContext()` builds `ctx` once per selection, so `getParsed()` results last the whole render. Besides the raw fields it has `cleanText`, `wordCount` (segmented for Chinese, Japanese, Thai), `hasDigit`, `hasLetter`, `number`, `tools`, and `foreign` / `language`.
@@ -173,7 +176,11 @@ Parsers in `actions.js` receive `(text, ctx)` and are read through `getParsed()`
 
 Always use `tools.replace(text, options)` inside an action. Never manipulate `el.value` directly.
 
-`tools.replace` calls `insertText` in `selection.js` which handles spacing, cursor placement, and undo in one place for both native inputs and contentEditable elements. Every edit's joins are tidied by one function, `tidySeam`: the spaces and marks around a join are rewritten as a whole, by Unicode role (separator, sentence end, opener, closer), judging only what the edit changed. In plain fields, deleting and cutting a selection go through `insertText` too; rich editors keep their own.
+`tools.replace` calls `insertText` in `selection.js` which handles spacing, cursor placement, and undo in one place for both native inputs and contentEditable elements. Every edit's joins are tidied by one function, `tidySeam`: the spaces and marks around a join are rewritten as a whole, by Unicode role (separator, sentence end, opener, closer), judging only what the edit changed. Deleting, cutting and typing over a selection that holds a space go through `insertText` too, in plain fields and rich editors alike; pasting into rich text stays the editor's (its formatting, its own paste features). Brackets act on `beforeinput`, which comes only for a key no editor has taken: an editor that pairs brackets itself keeps its own.
+
+Send puts a page selection into the composer: the last multi-line box typed in on the page (`content.js` keeps it, weakly, with its caret when it was left; code editors and proxy fields never count). It goes in where that caret was, through `insertText`, and the page doesn't scroll. `tools.composer()` gives `{ el, label }` while the box is on the page and shown; `tools.send(text, { quote })` sends.
+
+Rich text is read one line at a time, so a selection across lines isn't `writable`: the editor changes it, its own way. Editors keep their own model of the text and the selection, and four things in `selection.js` keep them in step, each with tests that fail without it (`tests/editors`): a selection Lighthouse moves is announced at once (`selectionchange`), as an editor acts on the selection it last heard of; the caret after an edit is placed once the editor's own update has landed; a selection being replaced is inserted over as it is, not narrowed first; and text with line breaks is handed to the editor as a paste, which every editor turns into its own paragraphs (inserted text keeps only its first line in Lexical).
 
 Spacing follows the text's own convention, not one language's rules: a deletion removes a space only where it made one extra, and marks are recognized by Unicode category. A space taken away is owed: a word typed next at that caret gets it back. It's recorded in `insertText`, where every deletion goes (keys, the bar's Cut and Delete), and paid on the next keystroke (`editing.js`).
 
@@ -191,7 +198,7 @@ The bar, its handles and the highlights' button and hints render in a closed sha
 
 ## Tests
 
-`tests/` (local, not in the repository) holds logic tests and browser tests that load the real extension into Chromium; see `tests/README.md`. Run `npm test` there before and after a change, and add a test with every bug fix.
+`tests/` (local, not in the repository) holds logic tests and browser tests that load the real extension into Chromium; see `tests/README.md`. Run `npm test` there before and after a change, and add a test with every bug fix. `tests/editors/` runs the content scripts against real editors (ProseMirror, Lexical, Quill, CodeMirror 6) and the settings popup; see its README.
 
 ## Debugging
 
