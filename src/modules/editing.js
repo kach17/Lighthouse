@@ -42,13 +42,20 @@
         Input.on({ type: 'keydown', scope: 'editable', typingHelper: true, inProxyFields: true,
             handler(e, { target: el }) { if (!e.getModifierState(e.key)) Sel.payOwed(el, e); return false; } });
 
-        // Brackets: our own pair. Its closer typed steps over it; Backspace inside it, empty, removes both
+        // Brackets: our own pair. Its closer typed steps over it; Backspace inside it, empty, removes both. Left (the
+        // closer typed, or → ↓ End), a space is owed after it, as after a wrap
         Input.on({
-            type: 'keydown', scope: 'editable', typingHelper: true, keys: [...CLOSERS, 'Backspace'],
+            type: 'keydown', scope: 'editable', typingHelper: true, keys: [...CLOSERS, 'Backspace', 'ArrowRight', 'ArrowDown', 'End'],
             handler(e, { target: el }) {
                 const pair = bracketsMode() !== 'off' && closerAtCaret(el);
                 if (!pair) return false;
-                if (e.key === autoClosed.closer) Sel.surface(el).select({ after: 1 }, 'end');
+                if (e.key.startsWith('Arrow') || e.key === 'End') {   // the browser moves the caret: owed once it has, if past the closer
+                    const closer = autoClosed.closer;
+                    setTimeout(() => { const r = Sel.surface(el).read({ before: 1 }); if (r && !r.text && r.before === closer) Sel.oweSpace(el); });
+                    autoClosed = null;
+                    return false;
+                }
+                if (e.key === autoClosed.closer) { Sel.surface(el).select({ after: 1 }, 'end'); Sel.oweSpace(el); }
                 else if (e.key === 'Backspace' && AUTO_CLOSE[pair.before] === autoClosed.closer) Sel.surface(el).rewrite({ before: 1, after: 1 }, () => ({ before: '', after: '' }));
                 else return false;
                 e.preventDefault();

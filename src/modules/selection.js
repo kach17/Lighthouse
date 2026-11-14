@@ -484,7 +484,7 @@
             if (options.select) caret = 'select';
             return { before: two.left.slice(0, kept), text: finalText, after: two.right, caret };
         });
-        if (tidied) queueMicrotask(() => owe(el));   // once the caret is placed (rich text: rewrite)
+        queueMicrotask(() => oweSpace(el, tidied));   // once the caret is placed (rich text: rewrite)
     }
 
     // The owed space: when a deletion takes a space away, a word typed next at that caret gets it back first
@@ -496,6 +496,9 @@
         const r = spot(el), before = !!r && needsSpaceAfter(r.before, r.before.length - 1), after = !!r && isWord(r.after[0]);
         owed = before || after ? { el, before, after, at: r.before + '|' + r.after } : null;
     }
+    // A space the next word may need: after a deletion that took one away (always), or after text put in where its
+    // line ends (a word typed next is a new one; a mark typed next isn't, and gets none)
+    function oweSpace(el, always = false) { const r = spot(el); if (always || (r && /^(\n|$)/.test(r.after))) owe(el); }
     function payOwed(el, e) {
         const o = owed, r = o && spot(el);
         owed = null;
@@ -639,6 +642,7 @@
         current,
         getActiveSelection,
         payOwed,
+        oweSpace,
         getLinkContext,
         insertText,
         surface,

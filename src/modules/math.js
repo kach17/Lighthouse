@@ -97,14 +97,24 @@
         rate: (base, target) => base === target ? Promise.resolve({ rate: 1, asOf: null })
             : global.LighthouseUtils.ask('GET_RATE', { base, target }, { maxAge: 10 * 60 * 1000 })
                 .then(res => res && res.success ? { rate: res.rate, asOf: res.asOf || null } : null),
-        // { value, target, metric } for a value in a unit ("5", "km"), or null for an unknown unit
-        convertUnit: (value, unit) => {
-            const key = String(unit).toLowerCase();
-            const conv = global.LighthouseData.UNIT_CONVERSIONS[key];
-            return conv && Number.isFinite(value) ? { value: conv.func(value), target: conv.target, metric: global.LighthouseData.METRIC_UNITS.includes(key) } : null;
+        /**
+         * A measurement in the other system: { value, shown, metric } (metric: whether the given unit is), or null. In the
+         * largest unit that comes to 1 or more (data.js SHOWN_IN), and in that unit and its smaller one as it is said
+         * (5 ft 11 in, 7 lb 4 oz) while short of one more of it
+         */
+        convertUnit: (value, key) => {
+            const U = global.LighthouseData.UNITS, from = U[String(key).toLowerCase()];
+            if (!from || !Number.isFinite(value)) return null;
+            const base = (value + (from.offset || 0)) * from.size, at = (k) => base / U[k].size - (U[k].offset || 0);
+            const keys = global.LighthouseData.SHOWN_IN[from.kind][from.system === 'metric' ? 'imperial' : 'metric'];
+            const k = keys.find(u => Math.abs(at(u)) >= 1) || keys[keys.length - 1], v = at(k), small = U[k].smaller;
+            const per = small && U[k].size / U[small].size, whole = Math.floor(v), rest = per && Math.round((v - whole) * per);
+            const shown = !per || v >= per ? MathLib.format(v, { unit: k }) : rest === per ? MathLib.format(whole + 1, { unit: k })
+                : [MathLib.format(whole, { unit: k }), rest && MathLib.format(rest, { unit: small })].filter(Boolean).join(' ');
+            return { value: v, shown, metric: from.system === 'metric' };
         },
         // Whether a unit is already in the user's system, so it needn't be converted
-        inSystem: (unit, system) => global.LighthouseData[system === 'metric' ? 'METRIC_UNITS' : 'IMPERIAL_UNITS'].includes(String(unit).toLowerCase()),
+        inSystem: (unit, system) => (global.LighthouseData.UNITS[String(unit).toLowerCase()] || {}).system === system,
 
         // ---------- Prices and measurements in text ----------
         // The words for them, from what the browser knows (Intl) in the given languages: every currency it lists,
@@ -128,7 +138,7 @@
             const each = (options, values, fn) => langs.forEach(lang => {
                 try { const f = new Intl.NumberFormat(lang, options); values.forEach(v => f.formatToParts(v).forEach(fn)); } catch (e) { /* unknown to this browser */ }
             });
-            for (const [key, conv] of Object.entries(Data.UNIT_CONVERSIONS)) {
+            for (const [key, conv] of Object.entries(Data.UNITS)) {
                 add(unit, key, key, caseless);
                 for (const display of ['short', 'long', 'narrow']) each({ style: 'unit', unit: conv.unit, unitDisplay: display }, [1, 2, 5], p => p.type === 'unit' && add(unit, p.value, key));
             }
@@ -169,13 +179,24 @@
                 const value = MathLib.parseLocaleNumber(number, currency || undefined);
                 if (Number.isFinite(value)) found.push({ index: m.index, length: m[0].length, value, ...(currency ? { currency } : { unit }) });
             }
-            return found;
+            // A measurement in two units, as heights and weights are said ("6 ft 6 in", "5 lb 4 oz"): one, in the larger
+            const U = global.LighthouseData.UNITS;
+            return found.reduce((all, a) => {
+                const b = all[all.length - 1], big = b && U[b.unit];
+                if (big && big.smaller === a.unit && /^[\s,]*$/.test(text.slice(b.index + b.length, a.index))) { b.value += a.value * U[a.unit].size / big.size; b.length = a.index + a.length - b.index; }
+                else all.push(a);
+                return all;
+            }, []);
         },
         // A text with its prices in the user's currency and its measurements in the user's system ("Convert page")
         // A converted value as the reader writes it, everywhere it is shown: a price by the browser, in the reader's
         // locale (₹480.00, 480,00 €); a measurement as a locale number with its unit (2,624.67 ft)
         format: (value, { currency, unit }) => {
             if (currency) try { return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(value); } catch (e) { /* not an ISO code */ }
+            // A measurement: one decimal (a rounded .0 kept: 68.0 kg for 68.04), none for a whole value, two digits below 1
+            const name = unit && (global.LighthouseData.UNITS[unit] || {}).unit, whole = Math.abs(value - Math.round(value)) < 1e-9 ? 0 : 1;
+            if (name) return new Intl.NumberFormat(undefined, { style: 'unit', unit: name, unitDisplay: 'short',
+                ...(Math.abs(value) >= 1 || !value ? { minimumFractionDigits: whole, maximumFractionDigits: whole } : { maximumSignificantDigits: 2 }) }).format(value);
             return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${currency || unit}`;
         },
         // The prices and measurements in a text that convert: each { index, length, shown } (shown: as format writes it)
@@ -188,7 +209,7 @@
                     if (found) { shown = MathLib.format(a.value * found.rate, { currency: targetCurrency }); a.rate = { base: a.currency, target: targetCurrency, ...found }; }
                 } else if (a.unit && !MathLib.inSystem(a.unit, targetUnitSystem)) {
                     const conv = MathLib.convertUnit(a.value, a.unit);
-                    if (conv) shown = MathLib.format(conv.value, { unit: conv.target });
+                    if (conv) shown = conv.shown;
                 }
                 if (shown) parts.push({ index: a.index, length: a.length, shown, rate: a.rate });
             }

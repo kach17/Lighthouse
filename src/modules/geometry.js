@@ -30,9 +30,12 @@
     }
 
     function measureExtent(range, spaces) {
+        // The selection's own text, from its first node to its last (not the whole container: in a long page that
+        // passes the limit before reaching the selection)
         const trimmed = range.cloneRange(), w = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
+        w.currentNode = range.startContainer;
         let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity, count = 0;
-        for (let n = w.currentNode.nodeType === 3 ? w.currentNode : w.nextNode(); n; n = w.nextNode()) {
+        for (let n = w.currentNode.nodeType === 3 ? w.currentNode : w.nextNode(); n && range.comparePoint(n, 0) <= 0; n = w.nextNode()) {
             if (++count > 500) return null;
             const from = n === range.startContainer ? range.startOffset : 0;
             const text = range.intersectsNode(n) ? n.data.slice(from, n === range.endContainer ? range.endOffset : n.length) : '';
@@ -59,10 +62,15 @@
         const range = source.cloneRange();
         range.collapse(atStart);
         let rect = range.getBoundingClientRect();
-        // A caret the browser reports nowhere (an empty paragraph: 0, 0): the element at it, its line break
+        // A point the browser reports nowhere (0, 0: an empty paragraph, an element's edge): the content beside it,
+        // after it for a start (its first line), before it for an end (its last line, at its end)
         if (!rect.x && !rect.y && !rect.height) {
-            const n = range.startContainer, at = n.nodeType === 1 ? n.childNodes[range.startOffset] || n : n.parentElement;
-            rect = (at.nodeType === 1 ? at : at.parentElement).getBoundingClientRect();
+            const n = range.startContainer, o = range.startOffset;
+            const at = n.nodeType === 1 ? n.childNodes[atStart ? o : o - 1] || n.childNodes[o] || n : n.parentElement;
+            const all = document.createRange(); all.selectNodeContents(at);
+            const lines = [...all.getClientRects()].filter(q => q.height), q = lines[atStart ? 0 : lines.length - 1];
+            const box = q || (at.nodeType === 1 ? at : at.parentElement).getBoundingClientRect();
+            rect = { x: q && !atStart ? box.right : box.left, y: box.top, height: box.height };
         }
         let dy = rect.y, lineHeight = rect.height;
         if (rect.height > 0) {

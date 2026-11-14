@@ -753,7 +753,7 @@
             parse(text) {
                 const t = text.trim(), [found] = MathLib.findAmounts(t);
                 const conv = found && found.unit && found.index === 0 && found.length === t.length && MathLib.convertUnit(found.value, found.unit);
-                return conv ? { val: found.value, unitKey: found.unit, isMetric: conv.metric, result: MathLib.format(conv.value, { unit: conv.target }) } : null;
+                return conv ? { val: found.value, unitKey: found.unit, isMetric: conv.metric, result: conv.shown } : null;
             },
             parsed(ctx) { return getParsed(ctx, 'unit', () => this.parse(ctx.cleanText)); },
             condition(ctx) {

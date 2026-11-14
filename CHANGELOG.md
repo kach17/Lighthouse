@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.45
+
+- Fixed: on long pages, a drag handle could appear far from the selection.
+- Fixed: on some chat pages, the bar went to the top of the screen instead of next to the selection.
+- More measurements: volumes and speeds join lengths, weights and temperatures, in every language your browser knows.
+- Conversions read naturally: 0.5 km as 1,640.4 ft, 180 cm as 5 ft 11 in, always to one decimal.
+- Measurements in two units, like 6 ft 6 in or 5 lb 4 oz, are read as one.
+- After brackets, quotes or a snippet at the end of a line, the next word you type gets its space; a period or comma doesn't.
+
 ## 1.4
 
 **Works in more places**

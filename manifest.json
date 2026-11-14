@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lighthouse",
-  "version": "1.4",
+  "version": "1.45",
   "description": "Look up, translate and convert selected text, and tidy what you type, right on the page.",
   "minimum_chrome_version": "120",
   "permissions": [

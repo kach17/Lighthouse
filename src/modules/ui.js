@@ -488,6 +488,10 @@
         let rect = !live ? ctx.element.getBoundingClientRect() : drawn && drawn.box;
         if (rect && live && !ctx.isForm && !rect.top && !rect.left && !rect.width) rect = pointer && { left: pointer.x, top: pointer.y, right: pointer.x, bottom: pointer.y, width: 0, height: 0 };
         if (!rect) return destroy();
+        // Where the selection is seen to begin and end, as the handles are: its box can reach far past them (text a
+        // scrolling panel clips, hidden elements inside it), and then the bar goes by its first and last lines
+        const top0 = ends ? Math.min(ends.start.dy, ends.end.dy) : rect.top;
+        const bottom0 = ends ? Math.max(ends.start.dy + ends.start.lineHeight, ends.end.dy + ends.end.lineHeight) : rect.bottom;
 
         // Centered on the selection, on the edge nearer the pointer (or caret); one line: above.
         // Chosen once per bar. Links: at the element; a caret: above its line, at the pointer.
@@ -498,7 +502,7 @@
                 const multiLine = ends && ends.end.dy - ends.start.dy > ends.start.lineHeight / 2;
                 // Without a pointer, the caret's end: the start when the selection was extended backwards
                 const y = pointer ? pointer.y : ends ? (live.backward ? ends.start.dy : ends.end.dy) : rect.top;
-                barSide = { owner, side: multiLine && (y - rect.top) > (rect.bottom - y) ? 'bottom' : 'top' };
+                barSide = { owner, side: multiLine && (y - top0) > (bottom0 - y) ? 'bottom' : 'top' };
             }
             prefer = barSide.side;
             anchorLeft = rect.left + rect.width / 2;
@@ -507,15 +511,15 @@
         const TOOLTIP_H = tooltipContainer.offsetHeight || 48, VIEW_W = window.innerWidth, VIEW_H = window.innerHeight;
         const MARGIN = $.token('--so-viewport-margin', 8), GAP = $.token('--so-bar-gap', 18);
         // Below the selection, clear of the handle tabs hanging under the line boxes
-        let idealBottom = rect.bottom + GAP;
+        let idealBottom = bottom0 + GAP;
         if (ends && window.LighthouseState.get('addDragHandles')) {
             const lineBottom = Math.max(ends.start.dy + ends.start.lineHeight, ends.end.dy + ends.end.lineHeight);
             idealBottom = Math.max(idealBottom, lineBottom + $.token('--so-handle-gap') + $.token('--so-handle-height') + $.token('--so-level-space'));
         }
-        const idealTop = rect.top - TOOLTIP_H - GAP, fits = (y) => y >= MARGIN && y <= VIEW_H - TOOLTIP_H - MARGIN;
+        const idealTop = top0 - TOOLTIP_H - GAP, fits = (y) => y >= MARGIN && y <= VIEW_H - TOOLTIP_H - MARGIN;
         // The preferred side if it fits, else above, else below, else stuck to the edge the selection went past
         const [top, mode] = prefer === 'bottom' && fits(idealBottom) ? [idealBottom, 'bottom'] : fits(idealTop) ? [idealTop, 'top']
-            : fits(idealBottom) ? [idealBottom, 'bottom'] : rect.top > VIEW_H - MARGIN ? [VIEW_H - TOOLTIP_H - MARGIN, 'sticky-bottom'] : [MARGIN, 'sticky-top'];
+            : fits(idealBottom) ? [idealBottom, 'bottom'] : top0 > VIEW_H - MARGIN ? [VIEW_H - TOOLTIP_H - MARGIN, 'sticky-bottom'] : [MARGIN, 'sticky-top'];
 
         // The mode changes what the bar shows, so it's applied before measuring
         MODE_CLASSES.forEach(c => tooltipContainer.classList.toggle(c, c === `mode-${mode}`));

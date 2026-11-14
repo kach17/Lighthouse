@@ -17,24 +17,40 @@
     };
 
     // 2. Unit Conversions
-    // Units already in the metric / imperial system (a value is only converted into the other one)
-    const METRIC_UNITS = ['c', 'km', 'kg', 'cm', 'm', 'g'];
-    const IMPERIAL_UNITS = ['f', 'mi', 'lbs', 'in', 'ft', 'oz'];
-
-    // Each unit's key, its name to the browser (Intl, for its words in every language), and its conversion
-    const UNIT_CONVERSIONS = {
-        'f':   { unit: 'fahrenheit', target: '°C',  func: v => (v - 32) * 5/9 },
-        'c':   { unit: 'celsius', target: '°F',  func: v => (v * 9/5) + 32 },
-        'km':  { unit: 'kilometer', target: 'mi',  func: v => v * 0.621371 },
-        'mi':  { unit: 'mile', target: 'km',  func: v => v * 1.60934 },
-        'kg':  { unit: 'kilogram', target: 'lbs', func: v => v * 2.20462 },
-        'lbs': { unit: 'pound', target: 'kg',  func: v => v / 2.20462 },
-        'cm':  { unit: 'centimeter', target: 'in',  func: v => v * 0.393701 },
-        'in':  { unit: 'inch', target: 'cm',  func: v => v / 0.393701 },
-        'ft':  { unit: 'foot', target: 'm',   func: v => v * 0.3048 },
-        'm':   { unit: 'meter', target: 'ft',  func: v => v * 3.28084 },
-        'g':   { unit: 'gram', target: 'oz',  func: v => v * 0.035274 },
-        'oz':  { unit: 'ounce', target: 'g',   func: v => v / 0.035274 }
+    // Each unit: its name to the browser (Intl: its words in every language), what it measures, its system, and its
+    // size in metres, grams, litres, km/h or °C (a value is (value + offset) × size in those). smaller: the unit a
+    // measurement in it may go on in, as it is said (6 ft 6 in, 5 lb 4 oz)
+    const UNITS = {
+        km:    { unit: 'kilometer', kind: 'length', system: 'metric', size: 1000 },
+        m:     { unit: 'meter', kind: 'length', system: 'metric', size: 1 },
+        cm:    { unit: 'centimeter', kind: 'length', system: 'metric', size: 0.01 },
+        mm:    { unit: 'millimeter', kind: 'length', system: 'metric', size: 0.001 },
+        mi:    { unit: 'mile', kind: 'length', system: 'imperial', size: 1609.344 },
+        yd:    { unit: 'yard', kind: 'length', system: 'imperial', size: 0.9144 },
+        ft:    { unit: 'foot', kind: 'length', system: 'imperial', size: 0.3048, smaller: 'in' },
+        in:    { unit: 'inch', kind: 'length', system: 'imperial', size: 0.0254 },
+        kg:    { unit: 'kilogram', kind: 'weight', system: 'metric', size: 1000 },
+        g:     { unit: 'gram', kind: 'weight', system: 'metric', size: 1 },
+        stone: { unit: 'stone', kind: 'weight', system: 'imperial', size: 6350.29318 },
+        lbs:   { unit: 'pound', kind: 'weight', system: 'imperial', size: 453.59237, smaller: 'oz' },
+        oz:    { unit: 'ounce', kind: 'weight', system: 'imperial', size: 28.349523125 },
+        l:     { unit: 'liter', kind: 'volume', system: 'metric', size: 1 },
+        ml:    { unit: 'milliliter', kind: 'volume', system: 'metric', size: 0.001 },
+        gal:   { unit: 'gallon', kind: 'volume', system: 'imperial', size: 3.785411784 },
+        floz:  { unit: 'fluid-ounce', kind: 'volume', system: 'imperial', size: 0.0295735295625 },
+        kmh:   { unit: 'kilometer-per-hour', kind: 'speed', system: 'metric', size: 1 },
+        mph:   { unit: 'mile-per-hour', kind: 'speed', system: 'imperial', size: 1.609344 },
+        c:     { unit: 'celsius', kind: 'temperature', system: 'metric', size: 1 },
+        f:     { unit: 'fahrenheit', kind: 'temperature', system: 'imperial', size: 5 / 9, offset: -32 }
+    };
+    // What a measurement is shown in, by what it measures and the reader's system: the largest unit that comes to 1
+    // or more. A unit not here is read, never shown (yards, stone)
+    const SHOWN_IN = {
+        length: { metric: ['km', 'm', 'cm', 'mm'], imperial: ['mi', 'ft', 'in'] },
+        weight: { metric: ['kg', 'g'], imperial: ['lbs', 'oz'] },
+        volume: { metric: ['l', 'ml'], imperial: ['gal', 'floz'] },
+        speed: { metric: ['kmh'], imperial: ['mph'] },
+        temperature: { metric: ['c'], imperial: ['f'] }
     };
 
     // 3. Smart Snapping Pairs
@@ -210,13 +226,12 @@
 
     global.LighthouseData = {
         CURRENCY_MAP,
-        UNIT_CONVERSIONS,
+        UNITS,
+        SHOWN_IN,
         SNAPPING_PAIRS,
         REVERSE_SNAPPING_PAIRS,
         baseLanguage,
         ownRegion,
-        METRIC_UNITS,
-        IMPERIAL_UNITS,
         LANGUAGES,
         WRAP_PAIRS,
         MDY_TIME_ZONES,
