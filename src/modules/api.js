@@ -82,8 +82,8 @@
             // For actions that convert values (currency, units): convert every value on the page
             convertPageItem: () => ({ label: 'Convert page', icon: 'refresh', onClick: () => window.LighthouseContent.convertAllOnPage() }),
             // Send: the composer (the last multi-line box typed in on this page) as { el, label }, and text sent into it
-            composer: () => window.LighthouseContent.composer(),
-            send: (text, options) => window.LighthouseContent.send(text, options),
+            composer: () => window.LighthouseSend.composer(),
+            send: (text, options) => window.LighthouseSend.send(text, options),
             // A value (a string, shown as one) or { node } with Copy, and any further items
             buildCopyMenu: (copyText, shown = copyText, label = 'Copy', extraItems = []) => ({
                 ...(typeof shown === 'string' ? { previewText: shown, isValue: true } : { node: shown.node }),

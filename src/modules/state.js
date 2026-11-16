@@ -13,7 +13,6 @@
         mode: 'HIDDEN',
         lastFocusedInput: null,      // the field the caret bar was last shown for (the first-click rule)
         activeActions: [],           // the bar's actions, in order
-        lastEvent: null,             // the last pointer or key event (a fallback position)
 
         // Settings: loaded once and kept current, only ever valid ones (config.js declares them), so a reader
         // never needs a fallback. New actions are added to stored settings by the background
@@ -104,7 +103,7 @@
                     this.ctx = data.ctx;
                     this.mode = 'SNIPPET_MENU';
                     this.activeActions = data.actions;
-                    this.pick = -1;   // none until Tab picks one (content.js)
+                    this.pick = 0;   // the first is chosen as the menu opens ('pick' chooses another)
                     fx.show(false);
                     return;
                 case 'snippetsGone':
@@ -144,6 +143,12 @@
                 case 'dragEnd':
                     if (was === 'DRAGGING') this.mode = this._beforeDrag;
                     return;
+                case 'pick': {   // the snippet menu: the next snippet (step 1) or the previous (-1), round
+                    const n = this.activeActions.length;
+                    if (n) this.pick = (this.pick + data.step + n) % n;
+                    return;
+                }
+                case 'wroteInto': this.lastFocusedInput = data.el; return;   // Lighthouse wrote into it: the caret is there, no first click
                 case 'actStart': this.acting = true; return;
                 case 'actEnd': this.acting = false; return;
             }
@@ -206,7 +211,8 @@
         // Enabled actions of a category whose condition matches, in the user's order
         _filterActions: function(category, apiCtx) {
             const enabled = this.get('enabled');
-            return this.get('order').map(id => Actions.find(a => a.id === id)).filter(a => a && a.category === category && enabled[a.id] !== false && a.condition(apiCtx));
+            const offline = this.get('onDevice');   // privacy lockdown: no action that is nothing without the network
+            return this.get('order').map(id => Actions.find(a => a.id === id)).filter(a => a && a.category === category && enabled[a.id] !== false && !(offline && a.network === 'always') && a.condition(apiCtx));
         }
     };
 

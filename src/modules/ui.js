@@ -134,13 +134,18 @@
     // first: the first button's label, said when there is no selection (what the bar offers first)
     function buildStrip(ctx, iconOnly, first) {
         clearStrip();
-        const facts = stripFacts(ctx);
-        if (!facts.length && iconOnly && first) facts.push(first);
+        const facts = stripFacts(ctx), naming = !facts.length && iconOnly && !!first;   // naming: the first button (what the bar offers first)
+        if (naming) facts.push(first);
         tooltipContainer.dataset.strip = facts.length || iconOnly ? 'on' : 'off';
         if (tooltipContainer.dataset.strip === 'off') return;
         const layers = [$.create('span', { className: 'is-shown' }), $.create('span')];
-        strip = { el: $.create('div', { className: 'lighthouse-strip', attrs: { 'aria-hidden': 'true' }, children: layers }), layers, facts, tool: false, on: null };
+        strip = { el: $.create('div', { className: 'lighthouse-strip', attrs: { 'aria-hidden': 'true' }, children: layers }), layers, facts, naming, tool: false, on: null };
         tooltipContainer.appendChild(strip.el);
+        // Its first item whole: a bar narrower than it (one icon under "Paste") is as wide as it, its buttons centred. Measured
+        // from the text and the strip's font, before the bar is placed (what a pointed button says later doesn't widen it)
+        const font = getComputedStyle(layers[0]), measure = buildStrip.measure ||= document.createElement('canvas').getContext('2d');
+        measure.font = font.font;
+        tooltipContainer.style.minWidth = `${Math.ceil(measure.measureText(facts[0] || '').width + parseFloat(font.paddingLeft) + parseFloat(font.paddingRight)) + 2}px`;   // 2: text as drawn can be a hair wider than measured
         show(facts);   // drawn with the bar, once it has its width
     }
 
@@ -149,6 +154,7 @@
         $.frame.cancel('strip');
         if (strip) { clearTimeout(strip.warm); clearTimeout(strip.grace); }
         strip = null;
+        tooltipContainer.style.minWidth = '';
     }
 
     // The one way the strip changes, through frame.draw: one update per frame, so scanning across
@@ -267,7 +273,7 @@
         if (inPlace && ids === shown) {   // the same buttons: their labels worked out again, nothing rebuilt
             current = apiCtx;
             shownButtons.forEach(b => { if (b._relabel) b._relabel(); if (b._refill) b._refill(); });
-            if (strip) { strip.facts = stripFacts(apiCtx); if (!strip.tool) show(strip.facts); }   // the selection's and the field's facts
+            if (strip && !strip.naming) { strip.facts = stripFacts(apiCtx); if (!strip.tool) show(strip.facts); }   // the selection's and the field's facts
             updatePosition(ctx, true);
             return afterRefresh();
         }
@@ -325,8 +331,7 @@
             children: [$.create('span', { className: 'lighthouse-scroll-text', text: `"${$.excerpt(ctx.text.trim(), 100)}"` })],
             events: { mousedown: stop(() => {
                 const sel = window.getSelection();
-                const target = ctx.isForm ? ctx.element : sel.rangeCount && sel.getRangeAt(0).startContainer.parentElement;
-                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                $.reveal((ctx.snapshot && ctx.snapshot.field) || (sel.rangeCount && sel.getRangeAt(0)));
             }) }
         });
         el._info = () => 'Scroll to selection';   // said in the strip
@@ -345,7 +350,7 @@
         // The page's <head>, fetched once for the preview and the icon. The setting is checked first, so
         // turning previews off also hides ones fetched earlier
         const pageHead = async () => {
-            if (!window.LighthouseState.get('linkPreviews')) return null;
+            if (!window.LighthouseState.get('linkPreviews') || window.LighthouseState.get('onDevice')) return null;
             const key = `og:${ctx.url}`;
             if (!previewCache.has(key)) { const html = await tools.query('LINK_PREVIEW', { url: ctx.url }); if (!html) return null; cacheSet(key, html); }
             return previewCache.get(key);
@@ -386,7 +391,7 @@
     // collapses, revealing e.g. a highlight)
     function finish(ctx) {
         window.LighthouseState.send('close');
-        if (ctx.isForm) ctx.element.focus();
+        if (ctx.snapshot && ctx.snapshot.field) ctx.snapshot.field.focus();
         else if (!ctx.isLink) window.getSelection().collapseToEnd();
     }
 
@@ -426,7 +431,7 @@
             label.replaceChildren($.create('span', { className: 'lighthouse-scroll-text', text: `"${val.quote}"` }));
             btn.classList.add('text-only-btn', 'is-quote');
         }).catch(() => {}))();
-        if (def.info) btn._info = () => def.info(ctx, tools);
+        if (def.info && !(def.network && window.LighthouseState.get('onDevice'))) btn._info = () => def.info(ctx, tools);   // privacy lockdown: the strip names it, nothing looked up
 
         // An action runs (execute), or opens its page (url). A click acts on the context of that moment, also after an await (Paste reads the clipboard first)
         btn.onmousedown = stop((e) => {
@@ -444,7 +449,7 @@
         const key = `${def.id}:${ctx.text || ctx.url || ''}`;
         let data = previewCache.get(key);
         if (!data) {
-            data = await def.preview(ctx, tools);
+            data = def.network && window.LighthouseState.get('onDevice') ? null : await def.preview(ctx, tools);   // privacy lockdown: no preview from the network
             if (data && !data.live) cacheSet(key, data);
         }
         if (!data) return null;
@@ -479,19 +484,13 @@
     function updatePosition(ctx, inPlace = false) {
         if (!tooltipContainer || !ctx) return;
 
-        // Where the selection (or the caret: its line, in a plain field as in rich text) is drawn now; the pointer
-        // belongs to the selection the bar opened for. Links: at the element. Page text drawn nowhere: at the pointer, or gone
+        // Where the selection (or the caret) is seen, as geometry.js decides it; links: at the element; nothing seen: gone
         const live = ctx.isLink ? null : window.LighthouseSelection.current();
         let drawn = null;
         try { drawn = live && live.edges('painted'); } catch (e) { /* nothing to measure */ }
         const ends = ctx.hasText ? drawn : null, pointer = ctx.snapshot && ctx.snapshot.pointer;
-        let rect = !live ? ctx.element.getBoundingClientRect() : drawn && drawn.box;
-        if (rect && live && !ctx.isForm && !rect.top && !rect.left && !rect.width) rect = pointer && { left: pointer.x, top: pointer.y, right: pointer.x, bottom: pointer.y, width: 0, height: 0 };
+        const rect = !live ? ctx.element.getBoundingClientRect() : drawn && drawn.box;
         if (!rect) return destroy();
-        // Where the selection is seen to begin and end, as the handles are: its box can reach far past them (text a
-        // scrolling panel clips, hidden elements inside it), and then the bar goes by its first and last lines
-        const top0 = ends ? Math.min(ends.start.dy, ends.end.dy) : rect.top;
-        const bottom0 = ends ? Math.max(ends.start.dy + ends.start.lineHeight, ends.end.dy + ends.end.lineHeight) : rect.bottom;
 
         // Centered on the selection, on the edge nearer the pointer (or caret); one line: above.
         // Chosen once per bar. Links: at the element; a caret: above its line, at the pointer.
@@ -502,7 +501,7 @@
                 const multiLine = ends && ends.end.dy - ends.start.dy > ends.start.lineHeight / 2;
                 // Without a pointer, the caret's end: the start when the selection was extended backwards
                 const y = pointer ? pointer.y : ends ? (live.backward ? ends.start.dy : ends.end.dy) : rect.top;
-                barSide = { owner, side: multiLine && (y - top0) > (bottom0 - y) ? 'bottom' : 'top' };
+                barSide = { owner, side: multiLine && (y - rect.top) > (rect.bottom - y) ? 'bottom' : 'top' };
             }
             prefer = barSide.side;
             anchorLeft = rect.left + rect.width / 2;
@@ -511,15 +510,12 @@
         const TOOLTIP_H = tooltipContainer.offsetHeight || 48, VIEW_W = window.innerWidth, VIEW_H = window.innerHeight;
         const MARGIN = $.token('--so-viewport-margin', 8), GAP = $.token('--so-bar-gap', 18);
         // Below the selection, clear of the handle tabs hanging under the line boxes
-        let idealBottom = bottom0 + GAP;
-        if (ends && window.LighthouseState.get('addDragHandles')) {
-            const lineBottom = Math.max(ends.start.dy + ends.start.lineHeight, ends.end.dy + ends.end.lineHeight);
-            idealBottom = Math.max(idealBottom, lineBottom + $.token('--so-handle-gap') + $.token('--so-handle-height') + $.token('--so-level-space'));
-        }
-        const idealTop = top0 - TOOLTIP_H - GAP, fits = (y) => y >= MARGIN && y <= VIEW_H - TOOLTIP_H - MARGIN;
+        let idealBottom = rect.bottom + GAP;
+        if (ends && window.LighthouseState.get('addDragHandles')) idealBottom = Math.max(idealBottom, rect.bottom + $.token('--so-handle-gap') + $.token('--so-handle-height') + $.token('--so-level-space'));
+        const idealTop = rect.top - TOOLTIP_H - GAP, fits = (y) => y >= MARGIN && y <= VIEW_H - TOOLTIP_H - MARGIN;
         // The preferred side if it fits, else above, else below, else stuck to the edge the selection went past
         const [top, mode] = prefer === 'bottom' && fits(idealBottom) ? [idealBottom, 'bottom'] : fits(idealTop) ? [idealTop, 'top']
-            : fits(idealBottom) ? [idealBottom, 'bottom'] : top0 > VIEW_H - MARGIN ? [VIEW_H - TOOLTIP_H - MARGIN, 'sticky-bottom'] : [MARGIN, 'sticky-top'];
+            : fits(idealBottom) ? [idealBottom, 'bottom'] : rect.top > VIEW_H - MARGIN ? [VIEW_H - TOOLTIP_H - MARGIN, 'sticky-bottom'] : [MARGIN, 'sticky-top'];
 
         // The mode changes what the bar shows, so it's applied before measuring
         MODE_CLASSES.forEach(c => tooltipContainer.classList.toggle(c, c === `mode-${mode}`));

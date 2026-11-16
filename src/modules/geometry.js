@@ -208,6 +208,9 @@
     // Where a snapshot is drawn now: { start, end } (each { dx, dy, lineHeight }) and its box, and on the
     // page also its range. kind 'painted' (handles, the bar: a painted edge space included) or 'content'
     // (Highlight: the text without edge whitespace). null when there is nothing to measure.
+    // The box is where the selection is seen, in a field as on the page: from its first drawn line to its last, from
+    // end to end on one line and across the lines' width on more. Not everything it holds: on some pages a selection
+    // reaches into text a scrolling panel clips, far past what is seen. Drawn nowhere: at the pointer that made it
     function edges(snap, kind = 'painted') {
         if (snap.field) {   // the box: from end to end, the field's width once the selection wraps
             // A line break at an end (begun past a line's end, a whole line taken) lies on no line of the text: the
@@ -224,10 +227,14 @@
         if (!snap.range) return null;
         const ext = extent(snap.range, kind === 'painted');
         const range = ext ? ext.range : snap.range;
-        const start = rangeEnd(range, true), end = rangeEnd(range, false);
-        // A caret: its line
-        const box = ext ? ext.box : range.collapsed ? { left: start.dx, right: start.dx, top: start.dy, bottom: start.dy + start.lineHeight, width: 0, height: start.lineHeight } : range.getBoundingClientRect();
-        return { start, end, box, range };
+        const start = rangeEnd(range, true), end = rangeEnd(range, false), p = snap.pointer;
+        if (!start.dx && !start.dy && !start.lineHeight && !end.dx && !end.dy) {
+            return p ? { start, end, box: { left: p.x, right: p.x, top: p.y, bottom: p.y, width: 0, height: 0 }, range } : null;
+        }
+        const top = Math.min(start.dy, end.dy), bottom = Math.max(start.dy + start.lineHeight, end.dy + end.lineHeight);
+        const oneLine = Math.abs(end.dy - start.dy) < start.lineHeight / 2, across = ext ? ext.box : range.getBoundingClientRect();
+        const left = oneLine ? Math.min(start.dx, end.dx) : across.left, right = oneLine ? Math.max(start.dx, end.dx) : across.right;
+        return { start, end, box: { left, right, top, bottom, width: right - left, height: bottom - top }, range };
     }
 
     window.LighthouseGeometry = { edges, pointAt, release };

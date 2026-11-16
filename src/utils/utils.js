@@ -206,6 +206,19 @@
 
     // A user's text in one line: spaces and line breaks collapsed, cut at a word boundary (any script)
     // and never inside a character (an emoji, a letter with its accents); '…' only when something was cut
+    // Seen on the screen now: an element, or where a range starts; not scrolled out of its panel, nor under something
+    // fixed (a chat's box)
+    seen: (target) => {
+        const node = target && (target.startContainer || target), el = node && (node.nodeType === 1 ? node : node.parentElement);
+        const q = el && target.getBoundingClientRect(), hit = q && q.height && document.elementFromPoint(q.left + Math.min(2, q.width / 2), q.top + q.height / 2);
+        return !!hit && (el.contains(hit) || hit.contains(el));
+    },
+    // Brought into view, to the middle of the screen, smoothly (whichever panel scrolls); already seen, it stays
+    reveal: (target) => {
+        const node = target && (target.startContainer || target), el = node && (node.nodeType === 1 ? node : node.parentElement);
+        if (el && !window.LighthouseUtils.seen(target)) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    },
+
     excerpt: (text, max) => {
         const $ = window.LighthouseUtils, source = String(text), room = max * 16;
         // Only the start is read (a clipboard can be megabytes): room for max characters even when each is long

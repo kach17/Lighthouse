@@ -33,7 +33,7 @@
         const hint = $.create('div', { className: 'marker-scrollbar-hint', children: [$.create('span', { className: 'marker-scrollbar-tooltip', text })] });
         hint.style.background = `var(--lh-hl-${color})`;
         const m = { range, hint, color, text, time: Date.now() };
-        hint.addEventListener('mousedown', () => m.range.startContainer.parentElement?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+        hint.addEventListener('mousedown', () => $.reveal(m.range));
         window.LighthouseUI.shadowRoot.appendChild(hint);
         markers.push(m);
         window.LighthouseContent.point.add(range, () => ({ isLink: true, text, element: range, hasText: true, facts: () => [], buttons: [{   // pointed at: its bar (content.js)

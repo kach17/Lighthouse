@@ -6,10 +6,7 @@
     const Data = window.LighthouseData;
 
     // "Is this a text field?" has one definition: LighthouseInput.fieldKind
-    function isEditableElement(el) {
-        const kind = window.LighthouseInput.fieldKind(el);
-        return { isForm: kind === 'form', isEditable: kind === 'editable' };
-    }
+    const isField = (el) => window.LighthouseInput.fieldKind(el) === 'form';
     const segmenter = window.LighthouseUtils.segmenter('word');
     
     const PAIRS = Data.SNAPPING_PAIRS;
@@ -72,7 +69,7 @@
     // What identifies the selection now: a plain field with its offsets and value, else the range's points
     function liveKey() {
         const el = window.LighthouseInput.focusedElement();   // through components' shadow roots, as everywhere
-        if (isEditableElement(el).isForm) return [el, ...(window.LighthouseInput.hasOffsets(el) ? [el.selectionStart, el.selectionEnd] : [undefined, undefined]), el.value];
+        if (isField(el)) return [el, ...(window.LighthouseInput.hasOffsets(el) ? [el.selectionStart, el.selectionEnd] : [undefined, undefined]), el.value];
         const sel = getActiveSelection(), r = sel && sel.rangeCount && sel.getRangeAt(0);
         return r ? [r.startContainer, r.startOffset, r.endContainer, r.endOffset] : [null];
     }
@@ -81,11 +78,11 @@
     // The selection as it is now: the last snapshot while it hasn't changed, else a new one
     const current = () => isCurrent(last) ? last : getContext().snapshot;
 
-    function snapshot(el, isForm, s, selected, cleanText, pointer) {
+    function snapshot(el, s, selected, cleanText, pointer) {
         const key = liveKey();
         if (!sameKey(key, lastKey)) lastId++;
         lastKey = key;
-        const field = isForm ? el : null, sel = field ? null : getActiveSelection(), text = selected ? selected.text : '';
+        const field = isField(el) ? el : null, sel = field ? null : getActiveSelection(), text = selected ? selected.text : '';
         const backward = field ? field.selectionDirection === 'backward' : !!(sel && sel.anchorNode && sel.focusNode && (sel.anchorNode === sel.focusNode
             ? sel.focusOffset < sel.anchorOffset : sel.anchorNode.compareDocumentPosition(sel.focusNode) & Node.DOCUMENT_POSITION_PRECEDING));
         let language = null;
@@ -93,26 +90,25 @@
             id: lastId, surface: s, field, backward,
             offsets: field ? [key[1], key[2]] : [undefined, undefined],   // a plain field: offsets in its value
             range: sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null,   // anything else: a DOM range
-            text,                 // as selected (a Windows double-click's trailing space included)
-            cleanText,            // as actions read it: trimmed, invisible characters and link tracking removed
+            text,                 // as selected, for positions (a Windows double-click's trailing space included)
             caret: !text,
             pointer: pointer ? { x: pointer.clientX, y: pointer.clientY } : null,
             edges(kind) { return window.LighthouseGeometry.edges(this, kind); },
-            get language() { return language ||= window.LighthouseLanguage.inspect({ text: cleanText, isForm, element: el }); }   // { foreign, language, reliable }
+            get language() { return language ||= window.LighthouseLanguage.inspect({ text: cleanText, field }); }   // { foreign, language, reliable }
         });
     }
 
     // The context actions read, with the snapshot. pointer (optional): the event that made the selection
     function getContext(pointer = null) {
         // A field only where Lighthouse can change the selection (not across lines in rich text): elsewhere it is read like page text
-        const el = window.LighthouseInput.focusedElement(), { isForm, isEditable } = isEditableElement(el), s = surface(el);
-        const isInput = (isForm || isEditable) && s.writable, selected = s.read(), all = isInput && s.read('all');
+        const el = window.LighthouseInput.focusedElement(), s = surface(el);
+        const isInput = s.writable, selected = s.read(), all = isInput && s.read('all');   // page text is never writable
         // What actions get: where Lighthouse doesn't edit (page text, across lines in rich text), the text as the browser
         // reads it, with the line breaks between paragraphs and list items (read for positions, they run together)
         const text = sanitizeText(selected ? (!s.writable && String(getActiveSelection() || '')) || selected.text : '');
-        return { text, isInput, isForm, isEditable, hasText: !!text, element: isInput ? el : null,
+        return { text, isInput, hasText: !!text, element: isInput ? el : null,
             isEmptyInput: !!all && !/\S/.test(all.before + all.text + all.after),
-            snapshot: snapshot(el, isForm, s, selected, text, pointer) };
+            snapshot: snapshot(el, s, selected, text, pointer) };
     }
 
     function getLinkContext(target) {
@@ -241,6 +237,7 @@
     // A plain field: offsets are the value's own
     function fieldBackend(el) {
         return {
+            overSelection: false, settle: (fn) => fn(),   // a field takes an edit and its caret at once
             raw(capB, capA) {
                 const v = el.value || '', s = el.selectionStart, e = el.selectionEnd;
                 return { before: v.slice(Math.max(0, s - capB), s), text: v.slice(s, e), after: v.slice(e, e + capA) };
@@ -302,6 +299,9 @@
     function domBackend(root, writable) {
         const range = () => { const sel = getActiveSelection(); return sel && sel.rangeCount ? sel.getRangeAt(0) : null; };
         return {
+            // Rich text: an edit that only replaces the selection goes over it as it is (an editor, Lexical, types into
+            // the selection it last saw); the caret is placed once the editor's own update after an edit is done
+            overSelection: writable, settle: writable ? (fn) => queueMicrotask(fn) : (fn) => fn(),
             raw(capB, capA) {
                 const r = range();
                 if (!r) return { before: '', text: '', after: '' };
@@ -417,7 +417,7 @@
             const selStart = old.before.length, selEnd = selStart + old.text.length;
             // Rich text, only the selection replaced: over the selection as it is. An editor (Lexical) types into the
             // selection it last saw, so one narrowed just before the edit would go unseen
-            if (kind === 'editable' && old.text && next.before === old.before && next.after === old.after) { p = selStart; q = was.length - selEnd; }
+            if (backend.overSelection && old.text && next.before === old.before && next.after === old.after) { p = selStart; q = was.length - selEnd; }
             const middle = now.slice(p, now.length - q);
             if (was !== now) {
                 backend.shift(p - selStart, (was.length - q) - selEnd);
@@ -430,10 +430,7 @@
             const [from, to] = caret === 'select' ? [textStart, textEnd]
                 : typeof caret === 'number' ? [textEnd + caret, textEnd + caret] : [textEnd, textEnd];
             // Rich editors (Lexical) apply their own update for an edit after it, putting the caret back: there it moves then
-            if (from !== at || to !== at) {
-                if (kind === 'editable') queueMicrotask(() => backend.shift(from - at, to - at));
-                else backend.shift(from - at, to - at);
-            }
+            if (from !== at || to !== at) backend.settle(() => backend.shift(from - at, to - at));
             return true;
         }
 
@@ -477,10 +474,8 @@
             const one = join(before, finalText + after), end = Math.max(0, one.right.length - after.length);
             const two = join(one.left + one.right.slice(0, end), one.right.slice(end)), kept = Math.min(one.left.length, two.left.length);
             finalText = two.left.slice(kept);
-            // appendSpace: re-add the space that triggered snippet expansion
-            if (options.appendSpace && !/\s$/.test(finalText)) finalText += ' ';
             // The caret lands after real content, never after a padding space
-            if (finalText.endsWith(' ') && !text.endsWith(' ') && !options.appendSpace) caret = -1;
+            if (finalText.endsWith(' ') && !text.endsWith(' ')) caret = -1;
             if (options.select) caret = 'select';
             return { before: two.left.slice(0, kept), text: finalText, after: two.right, caret };
         });

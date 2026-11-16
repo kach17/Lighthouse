@@ -158,7 +158,7 @@
         if (!/\p{L}/u.test(text)) return Promise.resolve(none);              // nothing word-like left
 
         // The paragraph is part of the cache key when it can influence the answer
-        const around = text.split(/\s+/).length > PASSAGE_WORDS ? '' : ctx.isForm && ctx.element ? ctx.element.value.slice(0, CONTEXT_CHARS) : surroundingText();   // a field: its own text
+        const around = text.split(/\s+/).length > PASSAGE_WORDS ? '' : ctx.field ? ctx.field.value.slice(0, CONTEXT_CHARS) : surroundingText();   // a field: its own text
         const key = `${text}\u0000${around}`;
         if (!cache.has(key)) {
             cache.set(key, decide(text, wordsOnly(around)).catch(() => ({ foreign: null, language: null })));   // the paragraph's words too: no numbers, codes or links

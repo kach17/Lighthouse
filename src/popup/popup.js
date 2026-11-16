@@ -16,7 +16,7 @@
             // A control marked data-setting shows that setting and changes it: a switch, or a choice among a few
             document.querySelectorAll('input[type=checkbox][data-setting]').forEach(input => {
                 input.checked = currentState[input.dataset.setting];
-                input.addEventListener('change', () => updateSetting(input.dataset.setting, input.checked));
+                input.addEventListener('change', () => { updateSetting(input.dataset.setting, input.checked); if (input.dataset.setting === 'onDevice') renderButtons(); });
             });
             document.querySelectorAll('input[type=radio][data-setting]').forEach(radio => {
                 radio.checked = currentState[radio.dataset.setting] === radio.value;
@@ -26,6 +26,7 @@
 
             setupTheme();
             setupStandards();
+            setupShortcut();
             renderButtons();
             renderSearch();
             setupAddEngine();
@@ -43,6 +44,14 @@
     // -------------------------------------------------------------------------
     // Settings helpers
     // -------------------------------------------------------------------------
+
+    // The shortcut back to the last box, as Chrome has it (people rebind it, or remove it); clicked: Chrome's page to change it
+    function setupShortcut() {
+        const button = document.getElementById('shortcut-back');
+        if (!button || !chrome.commands) return;
+        chrome.commands.getAll((commands) => { const c = commands.find(c => c.name === 'back-to-box'); button.textContent = (c && c.shortcut) || 'Set'; });
+        button.addEventListener('click', () => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }));
+    }
 
     function updateSetting(key, value) {
         currentState[key] = value;
@@ -210,11 +219,12 @@
     // Rows never move on their own; a row that's off stays in place and says so.
     // -------------------------------------------------------------------------
 
-    function createRow({ label, icon, url, isOn, type, ref, onToggle, onDelete }) {
-        const state = $.create('span', { className: 'lh-row-state', text: isOn ? '' : 'Off' });
+    // blocked: kept off by Privacy lockdown, whatever its own setting (which stays as it is, for when lockdown is off)
+    function createRow({ label, icon, url, isOn, blocked = false, type, ref, onToggle, onDelete }) {
+        const state = $.create('span', { className: 'lh-row-state', text: blocked ? 'Lockdown' : isOn ? '' : 'Off' });
         const li = $.create('li', {
-            className: 'lh-row list-item' + (isOn ? '' : ' is-off'),
-            attrs: { tabindex: '0', role: 'checkbox', 'aria-checked': String(isOn), 'data-type': type, draggable: 'true' },
+            className: 'lh-row list-item' + (isOn && !blocked ? '' : ' is-off'),
+            attrs: { tabindex: '0', role: 'checkbox', 'aria-checked': String(isOn && !blocked), 'aria-disabled': String(blocked), 'data-type': type, draggable: 'true' },
             children: [
                 $.create('span', { className: 'lh-row-grip', children: [registryIcon('grip')] }),
                 $.create('span', { className: 'lh-row-icon', children: [ $.createSmartIcon(icon, url, label) ] }),
@@ -239,6 +249,7 @@
         }
 
         const toggle = () => {
+            if (blocked) return;
             const next = li.getAttribute('aria-checked') !== 'true';
             li.setAttribute('aria-checked', String(next));
             li.classList.toggle('is-off', !next);
@@ -277,7 +288,7 @@
             const meta = Config.actions.find(a => a.id === id);
             if (!meta) return;
             list.appendChild(createRow({
-                label: meta.label, icon: meta.icon, isOn: !!currentState.enabled[id], type: 'main', ref: id,
+                label: meta.label, icon: meta.icon, isOn: !!currentState.enabled[id], blocked: !!currentState.onDevice && meta.network === 'always', type: 'main', ref: id,
                 onToggle: (next) => {
                     currentState.enabled[id] = next;
                     updateSetting('enabled', currentState.enabled);
@@ -370,8 +381,8 @@
         list.innerHTML = '';
         // At the top, as on the other tabs: what to do first, then (with snippets) how to use them
         document.getElementById('shortcuts-desc').textContent = snippets.length
-            ? 'Type //name and Space to insert. Click one to copy.'
-            : 'Save text you type often, then type //name and Space to insert it anywhere.';
+            ? 'Type //name and press Tab to insert. Click one to copy.'
+            : 'Save text you type often, then type //name and press Tab to insert it anywhere.';
 
         // A snippet copies its text when clicked (for where typing it can't reach: other apps, Google Docs, sites
         // where Lighthouse is off), with the bar's own Copied toast

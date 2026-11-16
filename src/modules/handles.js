@@ -15,12 +15,12 @@
     let onRelease = null;   // the pipeline, told when a drag ends (set by content.js)
 
     // Where the ends are painted: { start, end }, each { dx, dy, lineHeight }. An end with nothing
-    // measured (at 0, 0): the last pointer or key event's position
+    // measured (at 0, 0): the pointer that made the selection
     function ends() {
         let e = null;
         try { e = Sel.current().edges('painted'); } catch (err) { /* nothing to measure */ }
         if (!e) return null;
-        const at = (p) => p.dx || p.dy || !State.lastEvent ? { ...p } : { ...p, dx: State.lastEvent.clientX, dy: State.lastEvent.clientY - 8 };
+        const pointer = Sel.current().pointer, at = (p) => p.dx || p.dy || !pointer ? { ...p } : { ...p, dx: pointer.x, dy: pointer.y - 8 };
         return { start: at(e.start), end: at(e.end) };
     }
 

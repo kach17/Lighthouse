@@ -319,14 +319,14 @@
             label: 'Send',
             category: 'selection',
             icon: 'send',
-            // Into the composer: the last multi-line box typed in on this page, unless the selection is in it
+            // Into the last box typed in on this page, unless the selection is in it; as a quote into one that takes lines
             condition: (ctx) => {
                 const box = ctx.hasText && ctx.tools.composer(), range = ctx.snapshot && ctx.snapshot.range;
                 return !!box && !(range && box.el.contains(range.commonAncestorContainer));
             },
             info: (ctx, tools) => { const box = tools.composer(); return box && (box.label ? `Into ${box.label}` : 'Into the last text box'); },
             execute: (ctx, tools) => tools.send(ctx.text) ? { success: true, message: 'Sent' } : { success: false, message: 'The text box is gone' },
-            preview: (ctx, tools) => ({ items: [{ label: 'Send as quote', icon: 'quote', onClick: () => { if (tools.send(ctx.text, { quote: true })) tools.toast('Sent'); } }] })
+            preview: (ctx, tools) => { const box = tools.composer(); return box && box.multiline ? { items: [{ label: 'Send as quote', icon: 'quote', onClick: () => { if (tools.send(ctx.text, { quote: true })) tools.toast('Sent'); } }] } : null; }
         },
         {
             id: 'search',
@@ -360,7 +360,7 @@
             }
         },
         {
-            id: 'translate',
+            id: 'translate', network: 'preview',
             label: 'Translate',
             category: 'selection',
             icon: 'translate',
@@ -386,7 +386,7 @@
             }
         },
         {
-            id: 'dictionary',
+            id: 'dictionary', network: 'preview',
             label: 'Define',
             category: 'selection',
             icon: 'dictionary',
@@ -412,7 +412,7 @@
             }
         },
         {
-            id: 'wikipedia',
+            id: 'wikipedia', network: 'preview',
             label: 'Wiki',
             category: 'selection',
             icon: 'wikipedia',
@@ -441,7 +441,9 @@
             voice(ctx) {
                 if (!('speechSynthesis' in window)) return null;
                 const lang = Data.baseLanguage(this.lang(ctx)), region = (code) => (code.split(/[-_]/)[1] || '').toUpperCase();
-                const voices = window.speechSynthesis.getVoices().filter(v => Data.baseLanguage(v.lang) === lang);
+                // On the device when there is such a voice: an online one (Chrome's "Google …") sends the text away to be spoken
+                const all = window.speechSynthesis.getVoices().filter(v => Data.baseLanguage(v.lang) === lang), here = all.filter(v => v.localService);
+                const voices = here.length || setting('onDevice') ? here : all;   // privacy lockdown: never an online voice
                 const own = Data.ownRegion(lang);
                 let likely = null; try { likely = new Intl.Locale(lang).maximize().region; } catch (e) { /* unknown code */ }
                 return voices.find(v => own && region(v.lang) === own) || voices.find(v => region(v.lang) === likely)
@@ -622,7 +624,7 @@
             }
         },
         {
-            id: 'spellcheck',
+            id: 'spellcheck', network: 'always',
             label: 'Spelling',
             category: 'input',
             icon: 'spellcheck',
@@ -702,7 +704,7 @@
             }
         },
         {
-            id: 'currency',
+            id: 'currency', network: 'always',
             label: 'Convert',
             category: 'smart',
             icon: 'currency',
@@ -895,7 +897,7 @@
 
     // Translate to: Translate for your own writing in a field, into the language you write in ("Write in" in Settings; Translate: "Read in")
     const Translate = ACTIONS.find(a => a.id === 'translate');
-    ACTIONS.splice(ACTIONS.indexOf(Translate) + 1, 0, { ...Translate, id: 'translate_to', label: 'Translate to…', category: 'input',
+    ACTIONS.splice(ACTIONS.indexOf(Translate) + 1, 0, { ...Translate, id: 'translate_to', network: 'always', label: 'Translate to…', category: 'input',
         target: () => setting('standards').writeLanguage,
         condition(ctx) { return ctx.hasText && ctx.canType && ctx.foreign !== true && !!ctx.language && ctx.text.length <= this.MAX && !!this.target() && baseLanguage(ctx) !== Data.baseLanguage(this.target()); },
         dynamicLabel() { return `Translate to ${Utils.languageName(Data.baseLanguage(this.target()))}`; },

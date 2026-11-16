@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.50
+
+**Privacy**
+- Privacy lockdown: one switch in Settings, and Lighthouse contacts no service at all. No previews, exchange rates or spelling, and only your device's own voices; a click can still open a site.
+- Read aloud prefers a voice on your device, so what it reads stays there. Before, it could pick one of Chrome's online voices, which send the text away to be spoken.
+
+**Back to where you were**
+- Alt+L takes you back to the last box you typed in, with the cursor where you left it. Press it again to return to where you were reading, your selection included.
+- On chat sites, where the conversation scrolls above a fixed box, Alt+L brings the conversation back to where it was while you typed.
+- Chrome listens for the shortcut, not the page. Settings shows it, and a click there changes it.
+- Send now works with any box you type in, like a site's search box: select a word on the page and Send puts it there.
+
+**Snippets**
+- The snippet menu works like completion elsewhere: it opens with the first snippet chosen, ← → choose another, and Tab inserts it.
+- Space is just a space now. Enter inserts too, so a chat never sends a half-typed name.
+
+**Fixes**
+- Escape closes Lighthouse's bar or snippet menu without the page reacting to it too; an editor no longer loses your cursor.
+- In an empty text box, the line above Paste read "Pa…". It now says "Paste" in full.
+
+**Under the hood**
+- Lighthouse works as before, rebuilt so that each decision is made in one place: where a selection sits on screen, whether a text box can be edited, and what the bar shows. Bugs like the ones fixed in 1.45, where the bar and the handles disagreed about where a selection was, can't happen that way anymore.
+
 ## 1.45
 
 - Fixed: on long pages, a drag handle could appear far from the selection.

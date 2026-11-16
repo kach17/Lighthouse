@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lighthouse",
-  "version": "1.45",
+  "version": "1.5",
   "description": "Look up, translate and convert selected text, and tidy what you type, right on the page.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -59,6 +59,7 @@
         "src/modules/markers.js",
         "src/modules/handles.js",
         "src/modules/ui.js",
+        "src/modules/send.js",
         "src/content/content.js"
       ]
     }
@@ -80,5 +81,13 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "commands": {
+    "back-to-box": {
+      "suggested_key": {
+        "default": "Alt+L"
+      },
+      "description": "Back to the last box you typed in, and back again"
+    }
   }
 }

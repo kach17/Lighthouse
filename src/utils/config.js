@@ -40,6 +40,7 @@
     tidySpacing:    { default: true },    // fix spaces and punctuation when deleting, cutting or pasting
     showLabels:     { default: false },   // icon-only buttons: the strip names what's pointed at
     linkPreviews:   { default: false },   // opt-in: fetching the hovered page needs a permission the user grants
+    onDevice:       { default: false },   // nothing sent on its own (background.js refuses every request); a click still opens a site
     brackets:       { default: 'wrap', options: ['off', 'wrap', 'close'] },   // wrap a selection; close: also auto-close
     highlightColor: { default: 'yellow', options: (global.LighthouseData && global.LighthouseData.HIGHLIGHT_COLORS) || ['yellow'] },   // the last color used
     themeMode:      { default: 'light', options: ['light', 'dark'] },

@@ -60,6 +60,9 @@ function isPrivateHost(host) {
 // from: the page that asked (anyHost fetches). A public page can't reach into the private network
 // through Lighthouse, not even by a redirect; a local page (intranet, localhost) can.
 async function gatewayFetch(url, { anyHost = false, from = null, timeout = 8000, cutAt = null, post = null, image = false, file = false } = {}) {
+    // Privacy lockdown: nothing goes out, whatever asked (every request Lighthouse makes passes here)
+    const { onDevice } = await chrome.storage.sync.get({ onDevice: self.LighthouseConfig.defaults.onDevice });
+    if (onDevice) throw new Error('Kept on this device');
     let u;
     try { u = new URL(url); } catch (e) { throw new Error('Invalid URL'); }
     if (!['https:', 'http:'].includes(u.protocol)) throw new Error('Unsupported protocol');
@@ -174,6 +177,11 @@ async function amountWords(langs) {
     }
     return { result: kept[key] };
 }
+
+// The shortcut back to the last box typed in (Alt+L, or the user's own): the browser hears it, never the page
+chrome.commands.onCommand.addListener((command, tab) => {
+    if (command === 'back-to-box' && tab) chrome.tabs.sendMessage(tab.id, { action: 'BACK_TO_BOX' }, () => void chrome.runtime.lastError);
+});
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request && request.target === 'offscreen') return;   // meant for the hidden page, not here
