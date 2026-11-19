@@ -1,4 +1,4 @@
-# A release for every new version: when a push to Revamp (the default branch) carries a version (manifest.json) that has no release
+# A release for every new version: when a push to Revamp (the default branch) carries a version (extension/manifest.json) that has no release
 # yet, this makes one, named and tagged after it, with its notes from CHANGELOG.md and the extension's zip
 # attached (what a download has: the extension and its license; manifest.json at the zip's top, as the
 # Chrome Web Store expects). Pushes that keep the version change nothing.
@@ -20,7 +20,7 @@ jobs:
 
       - name: Version
         id: version
-        run: echo "version=$(jq -r .version manifest.json)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(jq -r .version extension/manifest.json)" >> "$GITHUB_OUTPUT"
 
       - name: Released already?
         id: released
@@ -39,7 +39,11 @@ jobs:
           awk -v v="## $VERSION" '$0 == v { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
           # No release without its notes: the heading must match the version exactly (1.5 is not 1.50)
           grep -q '[^[:space:]]' notes.md || { echo "::error::CHANGELOG.md has no '## $VERSION' section. Add it, then push again."; exit 1; }
-          git archive --format=zip -o "lighthouse-$VERSION.zip" HEAD
+          # Two packages: the source (the extension folder and the license, comments and all), and the store's, built from it
+          # reproducibly (scripts/build-store.sh); the checksums of both in the notes, so either can be checked
+          git archive --format=zip -o "lighthouse-$VERSION-source.zip" HEAD:extension && zip -q -j "lighthouse-$VERSION-source.zip" LICENSE
+          sh scripts/build-store.sh "lighthouse-$VERSION.zip"
+          { echo; echo '---'; echo; echo 'Checksums (SHA-256):'; echo '```'; sha256sum "lighthouse-$VERSION.zip" "lighthouse-$VERSION-source.zip"; echo '```'; } >> notes.md
 
       - name: Release
         if: steps.released.outputs.yes != 'true'
@@ -47,5 +51,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          gh release create "v$VERSION" "lighthouse-$VERSION.zip" \
+          gh release create "v$VERSION" "lighthouse-$VERSION.zip" "lighthouse-$VERSION-source.zip" \
             --title "Lighthouse $VERSION" --notes-file notes.md --target "$GITHUB_SHA"

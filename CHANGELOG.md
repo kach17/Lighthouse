@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.52
+
+- Pages start faster: Lighthouse now loads its word data only when you first select or type.
+- Uses less memory: the hidden page for reading the clipboard now closes when it isn't needed.
+- The store version leaves out the code's comments, for about a fifth less memory in each tab. The full source is published with every release.
+
 ## 1.51
 
 - Lighthouse is now called Lighthouse — Selection Toolbar, to say what it is.

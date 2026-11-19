@@ -2,8 +2,6 @@
 
 ## Before you start
 
-The architecture, what the 1.5 work showed about it, and the plan for 1.6 are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Start there before changing how the parts fit together.
-
 There's no bundler. No `import`/`export`. Each file wraps itself in an IIFE and attaches to `window`:
 
 ```js
@@ -13,9 +11,29 @@ There's no bundler. No `import`/`export`. Each file wraps itself in an IIFE and 
 })();
 ```
 
-`manifest.json` controls load order - utilities first, modules second, `content.js` last. If you add a file, add it there in the right position.
+`extension/manifest.json` controls load order - utilities first, modules second, `content.js` last. If you add a file, add it there in the right position.
 
 ---
+
+## Who owns what
+
+Each layer decides its own things, and only it does:
+
+| Layer | File | Its job |
+|---|---|---|
+| Input | `input.js` | The only listener: keys, pointer, editing, selection, scroll. Features subscribe by scope; one filter decides what reaches them |
+| Text | `selection.js` | Reading and writing text in every kind of box (the surfaces), the snapshot of a selection, the context the bar works from, snapping, the owed space |
+| Geometry | `geometry.js` | Where a selection is drawn: its ends and its box, measured against the current layout |
+| Language | `language.js` | Whether a selection is in a language the reader reads, on the device |
+| Numbers | `math.js`, `data.js` | Amounts in text (prices, measurements), conversions, arithmetic |
+| State | `state.js` | The settings, and the bar's state machine: which bar shows, with which actions |
+| Controller | `content.js` | Connects input to the pipeline and to State |
+| Features | `actions.js`, `editing.js`, `handles.js`, `markers.js`, `send.js` | The buttons, the typing helpers, the drag handles, highlights, Send |
+| Interface | `ui.js` | The bar, the strip and popovers, in a closed shadow root, and where the bar goes |
+| Background | `background.js` | The services Lighthouse calls (translation, definitions, rates), settings kept current |
+| Settings | `popup.js` | The settings window |
+
+**When you change something, find the owner first.** Every bug or change starts by naming the layer that owns it, from the table above, and is fixed there, with a test that reproduces it. If two layers both decide the same thing, that is a bug in itself.
 
 ## How an interaction flows
 
@@ -33,7 +51,11 @@ Typing helpers step aside, unless a subscription opts in (`inProxyFields`), wher
 
 ## Files
 
+The repository: `extension/` is the extension itself (what Chrome loads and the store gets), `docs/` what to read, `scripts/` the store build, `tests/` the test suite, `.github/` the release workflow. Inside `extension/`:
+
 ```
+manifest.json
+icons/
 src/
 ├── background/
 │   ├── background.js        Services (the only network access), settings migration.
@@ -205,11 +227,11 @@ The bar, its handles and the highlights' button and hints render in a closed sha
 
 ## Tests
 
-`tests/` (local, not in the repository) holds logic tests and browser tests that load the real extension into Chromium; see `tests/README.md`. Run `npm test` there before and after a change, and add a test with every bug fix. `tests/editors/` runs the content scripts against real editors (ProseMirror, Lexical, Quill, CodeMirror 6) and the settings popup; see its README.
+`tests/` holds logic tests and browser tests that load the real extension into Chromium; see `tests/editors/README.md`. Run `npm test` in `tests/editors` before and after a change, and add a test with every bug fix. `tests/editors/` runs the content scripts against real editors (ProseMirror, Lexical, Quill, CodeMirror 6) and the settings popup; see its README.
 
 **On real sites, by hand.** The tests run against the editors sites are built with, not the sites themselves. After a change to how text is read, written or measured, check: a chat app (claude.ai, ChatGPT or Gemini: select in an answer, type and use a snippet in the message box, Send), a mail app (Gmail: compose, brackets, tidy spacing), a code site (GitHub: a file, a comment box), and a notes app (Notion).
 
-**Releasing:** add the version's section to `CHANGELOG.md`, its heading exactly the version (`## 1.51` for `1.51`: the workflow stops when there is none), raise `version` in `manifest.json`, and push to `Revamp`. A workflow (`.github/workflows/release.yml`) then makes the release, with those notes and the extension's zip. A push that keeps the version makes none.
+**Releasing:** add the version's section to `CHANGELOG.md`, its heading exactly the version (`## 1.51` for `1.51`: the workflow stops when there is none), raise `version` in `manifest.json`, and push to `Revamp`. A workflow (`.github/workflows/Release.yml`) then makes the release, with those notes and two packages: `lighthouse-<version>-source.zip`, the extension's files as they are here, and `lighthouse-<version>.zip`, the one for the Chrome Web Store, built from them by `scripts/build-store.sh` (comments dropped, text in plain ASCII, the code otherwise unchanged and readable: about a fifth less memory in every tab). The build is reproducible: to check a release's store package, check out its tag and run `sh scripts/build-store.sh`; the zip's SHA-256 matches the one in the release notes. The tests can run against a store package too: unzip it and set `LIGHTHOUSE_ROOT` to that folder. A push that keeps the version makes none.
 
 ## Debugging
 

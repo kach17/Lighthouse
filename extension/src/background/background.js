@@ -101,15 +101,21 @@ async function gatewayFetch(url, { anyHost = false, from = null, timeout = 8000,
 }
 
 // --- Clipboard (read in src/offscreen with the extension's permission: no site prompts) ---
-let creating = null;   // one creation at a time (a second would fail)
+// The hidden page is opened for a read and closed after a while without one: a clipboard document has no lifetime of its
+// own, so it stayed for the whole session. The wait is shorter than the service worker's idle time (30 s), so its timer
+// still runs; a read during a close waits for it, then opens the page again
+let creating = null, idle = null, closing = null;   // one creation at a time (a second would fail)
+const IDLE_CLOSE = 20 * 1000;
 const ensureOffscreen = async () => (await chrome.offscreen.hasDocument()) || await (creating ||= chrome.offscreen.createDocument(
     { url: 'src/offscreen/offscreen.html', reasons: ['CLIPBOARD'], justification: 'Paste button and its preview' }).finally(() => { creating = null; }));
-ensureOffscreen().catch(() => {});
 
 async function readClipboard(sender) {
     if (!sender.tab || !sender.tab.active) throw new Error('Not the active tab');   // only the tab in front
+    clearTimeout(idle);
+    if (closing) await closing;
     await ensureOffscreen();
     const res = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'read-clipboard' });
+    idle = setTimeout(() => { closing = chrome.offscreen.closeDocument().catch(() => {}).finally(() => { closing = null; }); }, IDLE_CLOSE);
     return { text: (res && res.text) || '' };
 }
 

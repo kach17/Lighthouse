@@ -1,0 +1,31 @@
+{
+  "name": "lighthouse-editor-tests",
+  "private": true,
+  "description": "Browser tests: the extension's content scripts against real editors (ProseMirror, Lexical, Quill, CodeMirror 6) and the settings popup",
+  "scripts": {
+    "build": "esbuild fixtures/editors.js --bundle --outfile=build/editors.js --log-level=warning",
+    "pretest": "npm run build",
+    "test": "node --test --test-concurrency=1",
+    "test:fast": "node --test units.test.js offscreen.test.js",
+    "test:editing": "npm run build && node --test --test-concurrency=1 brackets.test.js tidy.test.js owed-space.test.js rich-text.test.js undo.test.js code-editor.test.js",
+    "test:writing": "npm run build && node --test --test-concurrency=1 snippets.test.js send.test.js",
+    "test:geometry": "npm run build && node --test --test-concurrency=1 handles.test.js caret-bar.test.js snapping.test.js selection-text.test.js",
+    "test:features": "npm run build && node --test --test-concurrency=1 features.test.js popup.test.js units.test.js"
+  },
+  "devDependencies": {
+    "@lexical/history": "^0.53.0",
+    "@lexical/rich-text": "^0.53.0",
+    "codemirror": "^6.0.2",
+    "esbuild": "^0.28.2",
+    "lexical": "^0.53.0",
+    "prosemirror-commands": "^1.7.2",
+    "prosemirror-history": "^1.5.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.13",
+    "prosemirror-schema-basic": "^1.2.5",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.42.9",
+    "puppeteer": "^25.17.0",
+    "quill": "^2.0.3"
+  }
+}

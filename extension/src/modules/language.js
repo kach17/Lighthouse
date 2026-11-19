@@ -25,7 +25,7 @@
 
     // Script codes that stand for several Unicode scripts
     const COMBINED = { Jpan: ['Hani', 'Hira', 'Kana'], Kore: ['Hang', 'Hani'], Hans: ['Hani'], Hant: ['Hani'] };
-    const words = global.LighthouseUtils.segmenter('word');
+    const words = () => global.LighthouseUtils.segmenter('word');   // on first use, not at load (see selection.js)
 
     // The language a writing system most likely is, as the browser knows it (Han: zh, kana: ja, Cyrillic: ru),
     // for text in another script that the detector couldn't name. Han with kana is Japanese.
@@ -65,7 +65,7 @@
     function wordsOnly(text) {
         const cleaned = text.replace(/\S+@\S+\.\S+/g, ' ').replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ')
             .replace(/(\p{L})\.(?=\p{L})/gu, '$1');   // abbreviations (د.إ, U.S.) as one word, whatever the ICU version
-        const list = [...words.segment(cleaned)].filter(s => s.isWordLike).map(s => s.segment);
+        const list = [...words().segment(cleaned)].filter(s => s.isWordLike).map(s => s.segment);
         const numeric = list.map(w => /\p{Nd}/u.test(w));
         return list.filter((w, i) => !numeric[i] && !((numeric[i - 1] || numeric[i + 1]) && [...w].length <= 3)).join(' ');
     }

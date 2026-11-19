@@ -58,7 +58,7 @@ Lighthouse isn't on the Chrome Web Store yet.
 
 1. Download the latest zip from [Releases](https://github.com/kach17/Lighthouse/releases) and unzip it
 2. Go to `chrome://extensions/` and turn on **Developer mode**
-3. Click **Load unpacked** and select the unzipped folder, the one that contains `manifest.json`
+3. Click **Load unpacked** and select the unzipped folder, the one that contains `manifest.json` (in a copy of this repository, that's the `extension` folder)
 
 Works on Chrome, Edge and Brave. Editors that draw their own text, like Google Docs, aren't supported.
 
@@ -90,7 +90,7 @@ Everything else happens on your device. Things you collect are forgotten when th
 
 ## Contributing
 
-Plain JavaScript, no bundler, no framework. See [DEVELOPER.md](./DEVELOPER.md).
+Plain JavaScript, no bundler, no framework. See [docs/DEVELOPER.md](./docs/DEVELOPER.md).
 
 ---
 

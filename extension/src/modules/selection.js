@@ -7,7 +7,9 @@
 
     // "Is this a text field?" has one definition: LighthouseInput.fieldKind
     const isField = (el) => window.LighthouseInput.fieldKind(el) === 'form';
-    const segmenter = window.LighthouseUtils.segmenter('word');
+    // The word segmenter on first use, not at load: creating the first loads the browser's language data (tens of ms),
+    // and most pages are only read
+    const words = () => window.LighthouseUtils.segmenter('word');
     
     const PAIRS = Data.SNAPPING_PAIRS;
     const REVERSE_PAIRS = Data.REVERSE_SNAPPING_PAIRS;
@@ -594,7 +596,7 @@
         const s = surface(), r = s.precise && s.read(atStart ? { before: 'line' } : { after: 'line' });
         if (!r) return;
         const side = atStart ? r.before : r.after;
-        const words = [...segmenter.segment(side)].filter(w => w.isWordLike), w = atStart ? words[words.length - 1] : words[0];
+        const found = [...words().segment(side)].filter(w => w.isWordLike), w = atStart ? found[found.length - 1] : found[0];
         if (w) s.select(atStart ? { before: { text: side.slice(w.index) } } : { after: { text: side.slice(0, w.index + w.segment.length) } });
     }
 
@@ -625,7 +627,7 @@
     }
 
     function getSnap(text, offset, type) {
-        for (const seg of segmenter.segment(text)) {
+        for (const seg of words().segment(text)) {
           if (offset > seg.index && offset < seg.index + seg.segment.length && seg.isWordLike) return type === 'start' ? seg.index : seg.index + seg.segment.length;
         }
         return offset;

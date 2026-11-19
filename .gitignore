@@ -1,1 +1,3 @@
-tests/
+# The tests are part of the repository; their installed tools and built fixtures are not
+tests/editors/node_modules/
+tests/editors/build/
