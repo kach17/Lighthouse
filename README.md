@@ -24,7 +24,8 @@ Select a word, a name or a whole sentence and get what you need without leaving 
 In any text box.
 
 - **Snippets:** save phrases you type often and bring them back as you type
-- **Send:** bring text from the page into the message you're writing
+- **Send:** bring text from the page into the box you were writing in
+- **Back to your box:** Alt+L puts the cursor back where you were typing on the page, and again takes you back to where you were reading
 - **Translate what you write** into the language you need
 - **Spelling and grammar** in many languages
 - **Collect and paste:** gather bits from anywhere, then paste them all at once
@@ -72,7 +73,10 @@ When a feature needs an outside service, Lighthouse sends only what that feature
 - **Translate and Define:** Google Translate and Wiktionary receive the words you selected
 - **Wikipedia:** Wikipedia receives the term you selected
 - **Currency:** Coinbase provides exchange rates; nothing you selected is sent
+- **Read aloud:** your device's own voices; only for a language it has none for, your browser's online voice, which sends the text to be spoken
 - **Spelling** (off by default): [LanguageTool](https://languagetool.org) receives the text you're checking and the sentence around it. See their [privacy policy](https://languagetool.org/legal/privacy).
+
+**Privacy lockdown:** one switch in Settings, and Lighthouse contacts no service at all: no previews, exchange rates or spelling, and only your device's own voices. A click can still open a site.
 
 Chrome also lists what else Lighthouse may do. Here is why:
 

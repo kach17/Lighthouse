@@ -61,7 +61,7 @@
       <h2 class="lh-section-title">Behaviour</h2>
       <label class="lh-row lh-toggle">
         <input type="checkbox" id="toggle-snapping" data-setting="smartSnapping" class="lh-visually-hidden">
-        <span class="lh-row-text"><span>Select whole words</span><small>Hold Alt (⌥) to select exactly, even links</small></span>
+        <span class="lh-row-text"><span>Select whole words</span><small>Part of a word selects all of it; with Alt (⌥), exactly what you drag</small></span>
         <span class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
       </label>
       <label class="lh-row lh-toggle">
@@ -71,7 +71,7 @@
       </label>
       <label class="lh-row lh-toggle">
         <input type="checkbox" id="toggle-tidy" data-setting="tidySpacing" class="lh-visually-hidden">
-        <span class="lh-row-text"><span>Tidy spacing</span><small>When you delete, cut or paste</small></span>
+        <span class="lh-row-text"><span>Tidy spacing</span><small>Keeps the spaces right when you delete, cut or paste</small></span>
         <span class="lh-seg is-control" aria-hidden="true"><span class="lh-seg-btn" data-value="false">Off</span><span class="lh-seg-btn" data-value="true">On</span></span>
       </label>
       <div class="lh-row p-static">
@@ -99,8 +99,8 @@
       </label>
 
       <h2 class="lh-section-title">Region</h2>
-      <div class="lh-row p-static"><label class="lh-row-label" for="std-lang">Read in</label><span class="lh-select"><select id="std-lang" class="lh-field"></select></span></div>
-      <div class="lh-row p-static"><label class="lh-row-label" for="std-write">Write in</label><span class="lh-select"><select id="std-write" class="lh-field"><option value="">Choose…</option></select></span></div>
+      <div class="lh-row p-static"><span class="lh-row-text"><label class="lh-row-label" for="std-lang">Read in</label><small>Translations and definitions come in it</small></span><span class="lh-select"><select id="std-lang" class="lh-field"></select></span></div>
+      <div class="lh-row p-static"><span class="lh-row-text"><label class="lh-row-label" for="std-write">Write in</label><small>Translate to… turns your writing into it</small></span><span class="lh-select"><select id="std-write" class="lh-field"><option value="">Choose…</option></select></span></div>
       <div class="lh-row p-static"><label class="lh-row-label" for="std-curr">Currency</label><span class="lh-select"><select id="std-curr" class="lh-field"></select></span></div>
       <div class="lh-row p-static">
         <label class="lh-row-label" for="std-units">Units</label>

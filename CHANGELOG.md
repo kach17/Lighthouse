@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.50
+## 1.51
+
+- Lighthouse is now called Lighthouse — Selection Toolbar, to say what it is.
+- Fixed: letters that reach below the line (g, y, p, j) were cut off in the bar's status line, Paste's text and other one-line previews.
+- Settings explain more plainly what selecting whole words, tidy spacing, and the languages you read and write in do.
+
+## 1.5
 
 **Privacy**
 - Privacy lockdown: one switch in Settings, and Lighthouse contacts no service at all. No previews, exchange rates or spelling, and only your device's own voices; a click can still open a site.

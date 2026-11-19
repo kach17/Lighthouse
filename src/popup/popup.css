@@ -61,5 +61,7 @@ body.lh-popup {
 .p-dev-actions { display: flex; gap: var(--so-btn-pad-x); }
 .p-css { min-height: 120px; }
 .p-version { padding-top: var(--so-space-7); }
+.p-version a { color: inherit; text-decoration: none; }   /* the line's own muted ink; underlined when pointed at */
+.p-version a:hover { text-decoration: underline; }
 
 [hidden] { display: none !important; }

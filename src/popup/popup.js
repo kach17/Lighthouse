@@ -37,7 +37,8 @@
             setupImportExport();
 
             const version = document.getElementById('version-label');
-            if (version) version.textContent = `Version ${chrome.runtime.getManifest().version}`;
+            if (version) version.append(`Version ${chrome.runtime.getManifest().version} · `,
+                $.create('a', { text: 'GitHub', attrs: { href: 'https://github.com/kach17/Lighthouse', target: '_blank', rel: 'noopener' } }));
         });
     });
 

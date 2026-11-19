@@ -421,3 +421,11 @@ textarea.lh-field { height: auto; padding: var(--so-space-4) var(--so-space-5); 
 .marker-scrollbar-tooltip { position: absolute; bottom: 0; right: 120%; width: max-content; padding: var(--so-space-4) var(--so-space-5); visibility: hidden; opacity: 0; background: var(--so-surface); color: var(--so-ink); box-shadow: var(--so-shadow); border-radius: var(--so-radius); font: 400 calc(var(--so-font-size) - 1px)/1.4 var(--so-font-family); text-align: start; pointer-events: none; transition: opacity 250ms, visibility 250ms; }
 .marker-scrollbar-tooltip.marker-scrollbar-tooltip-bottom { bottom: unset; top: 0; }
 .marker-scrollbar-hint:hover .marker-scrollbar-tooltip { visibility: visible; opacity: 1; transition-delay: 100ms; }
+/* ---------- Room for letters ----------
+   Text in a one-line box that hides its overflow (--so-font's line-height is 1): room above and below for what letters
+   draw outside the line (g, y, p, j; accents), cancelled by a margin, so nothing is cut and no box grows. Last in the
+   file: these boxes' own padding shorthands would reset it */
+.lighthouse-btn.is-quote > .lighthouse-label,
+.lighthouse-strip > span,
+:is(#lighthouse-extension-tooltip, .lighthouse-ghost) > .lighthouse-preview,
+.lighthouse-popover .lighthouse-preview { padding-block: 0.25em; margin-block: -0.25em; }

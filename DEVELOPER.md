@@ -2,6 +2,8 @@
 
 ## Before you start
 
+The architecture, what the 1.5 work showed about it, and the plan for 1.6 are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Start there before changing how the parts fit together.
+
 There's no bundler. No `import`/`export`. Each file wraps itself in an IIFE and attaches to `window`:
 
 ```js
@@ -21,7 +23,7 @@ There's no bundler. No `import`/`export`. Each file wraps itself in an IIFE and 
 User event → selectionChanged (content.js) → selection.js builds the snapshot → State.send('selected') picks the mode → ui.js renders
 ```
 
-Each step is isolated. `state.js` doesn't touch the DOM. `ui.js` doesn't know about selection logic. `content.js` just connects them.
+Each step is isolated. `state.js` doesn't touch the DOM, and only `state.js` changes State: other modules tell it what happened (`State.send`). `ui.js` doesn't know about selection logic. `content.js` just connects them.
 
 Every event enters through `input.js`, which also decides who a press belongs to, once, as it begins: the bar's (a press on Lighthouse, heard only by its own `bar` and `drag` scopes), the user's (one begun holding Alt: anything can be selected, and the page neither hears the press nor acts on it) or the page's. Snapping is decided at release instead: with Alt down then, the selection stays exactly as dragged. Handlers never check where a press came from; they only receive the ones that are theirs.
 
@@ -49,6 +51,7 @@ src/
 │   ├── input.js             The only place listening to input; what counts as a text field.
 │   ├── language.js          On-device language checks: is a selection foreign, page and user languages.
 │   ├── markers.js           Highlights, painted by the browser (CSS Custom Highlight API); the page is never changed.
+│   ├── send.js              Send: the composer (the last multi-line box typed in) and sending into it.
 │   ├── math.js              Expression parsing and calculation.
 │   ├── selection.js         Context detection, text insertion, snapping.
 │   ├── state.js             Mode state machine, action filtering.
@@ -74,7 +77,7 @@ The bar's state machine is in `state.js`: every change is a named event, `State.
 | `SMART` | Text selected and a parser matched (math, currency, date, color, JSON, base64) |
 | `INPUT` | A field: text selected in it, or the first click into it |
 | `LINK` | A bar for something on the page: an external link pointed at; a value Convert page changed (what it was, Undo all); a highlight pointed at (Clear highlight); the text being read aloud (Pause, Speed, Stop: while reading, this bar returns whenever no other is shown). A context with `buttons` gets those. Selection changes never close it |
-| `SNIPPET_MENU` | User typed `//` and matching shortcuts exist. Tab takes the only one, or picks among several (again: the next, Shift: back) and ← → then move the pick; Enter takes the pick, or a whole name. Until a pick, arrows and Enter are the text's. A pick looks and previews as hovering does; the strip says the keys |
+| `SNIPPET_MENU` | User typed `//` and matching snippets exist. It opens with the first one chosen; ← → choose another, Tab inserts the chosen one (Enter too, so a chat doesn't send a half-typed name), Space is just a space. The chosen one looks and previews as hovering does; the strip says the keys |
 | `DRAGGING` | A handle is being dragged: no bar; the drag owns the selection |
 
 `State.acting` is on while a keep-open action runs (Case); `State.busy` (acting or dragging) means no new selection is read. `State.orderActions(candidates, matched)` is the one ordering: content-matched actions first, then the user's order.
@@ -168,6 +171,8 @@ All requests go through `gatewayFetch` in `background.js`, without cookies or re
 
 `_favicon` is never web-accessible: any site could then read Chrome's favicon cache, and so which sites you've visited. Link icons in web pages come from the background (`FAVICON`) instead. The clipboard is read by the extension, never the page: `tools.readClipboard()` asks the background, which reads it in a hidden offscreen page (`src/offscreen/`). Read in the page, Chrome would prompt on every site and an allowed site would get the clipboard. Collected snippets are in `chrome.storage.session` (memory only), which only the extension can read: content scripts reach them through the `COLLECTION` service. Previews showing changing data (clipboard, collection) return `live: true` so they aren't cached.
 
+
+**Privacy lockdown** (`onDevice`): `gatewayFetch` refuses every request, so nothing goes out whatever asks. An action that uses the network says so with `network`: `'preview'` (its preview and strip info need it; a click opens a site, so it stays) or `'always'` (it is nothing without the network: hidden). Declare it on any new action that reaches a service.
 ## Parsers
 
 Parsers in `actions.js` receive `(text, ctx)` and are read through `getParsed()`. Dates: short selections only; tokens become a one-character "shape" matched by `DATE_PATTERNS`; names come from `LighthouseData.getDateVocabulary()`; any number left over rejects the match. An ambiguous `03/04` is read by `tools.dateOrder()` (browser language, or the time zone for plain English), and the preview offers the other reading unless a weekday settles it.
@@ -178,7 +183,7 @@ Always use `tools.replace(text, options)` inside an action. Never manipulate `el
 
 `tools.replace` calls `insertText` in `selection.js` which handles spacing, cursor placement, and undo in one place for both native inputs and contentEditable elements. Every edit's joins are tidied by one function, `tidySeam`: the spaces and marks around a join are rewritten as a whole, by Unicode role (separator, sentence end, opener, closer), judging only what the edit changed. Deleting, cutting and typing over a selection that holds a space go through `insertText` too, in plain fields and rich editors alike; pasting into rich text stays the editor's (its formatting, its own paste features). Brackets act on `beforeinput`, which comes only for a key no editor has taken: an editor that pairs brackets itself keeps its own.
 
-Send puts a page selection into the composer: the last multi-line box typed in on the page (`content.js` keeps it, weakly, with its caret when it was left; code editors and proxy fields never count). It goes in where that caret was, through `insertText`, and the page doesn't scroll. `tools.composer()` gives `{ el, label }` while the box is on the page and shown; `tools.send(text, { quote })` sends.
+Send puts a page selection into the last box typed in on the page, of any kind Lighthouse types into (not a structured or sensitive field, a code editor or a proxy field). `send.js` keeps it, weakly, with rich text's caret when it was left. It goes in where that caret was, through `insertText`, and the page doesn't scroll; in a one-line box lines become spaces and there is no quote. `tools.composer()` gives `{ el, label, multiline }` while the box is on the page and shown; `tools.send(text, { quote })` sends. The shortcut (`back-to-box` in the manifest's `commands`, Alt+L) flips between the page and the box. To the box: scrolled away, the box comes back; still on the screen (fixed below a chat), the chat comes back to where it was while typing (`view`, the text mid-screen at the last keystroke). It remembers what was mid-screen and the selection (a chat scrolls in its own panel, so not the page's scroll position); pressed again from the box, back there. `$.seen()` tells what is really on the screen; `$.reveal()` scrolls only to what isn't. It is the browser's: the background hears it and messages the tab, so no page key is listened to.
 
 Rich text is read one line at a time, so a selection across lines isn't `writable`: the editor changes it, its own way. Editors keep their own model of the text and the selection, and four things in `selection.js` keep them in step, each with tests that fail without it (`tests/editors`): a selection Lighthouse moves is announced at once (`selectionchange`), as an editor acts on the selection it last heard of; the caret after an edit is placed once the editor's own update has landed; a selection being replaced is inserted over as it is, not narrowed first; and text with line breaks is handed to the editor as a paste, which every editor turns into its own paragraphs (inserted text keeps only its first line in Lexical).
 
@@ -187,6 +192,8 @@ Spacing follows the text's own convention, not one language's rules: a deletion 
 ---
 
 ## Bar and handles
+
+**Keys, wherever Lighthouse shows something:** the arrows move where you look: ← → along a row (the bar, the snippet menu, an open popover), ↑ ↓ between levels (into a popover above or below, whichever side it opens on). Tab completes or acts on what is chosen, Enter does the same, Escape steps back a level and then closes. A key Lighthouse acts on doesn't reach the page too. Today the snippet menu follows this; full keyboard use of the bar is still to come, and builds on the same rule.
 
 The bar sits at whole pixels, centered on the selection on the edge nearer the pointer (one line: above), and moves with the text while scrolling. It rises out of the selection when it appears; when it leaves or moves to another line a snapshot fades out where it was; on the same line it glides. Handles are drawn under the bar, and below a selection the bar keeps clear of their tabs.
 
@@ -200,7 +207,9 @@ The bar, its handles and the highlights' button and hints render in a closed sha
 
 `tests/` (local, not in the repository) holds logic tests and browser tests that load the real extension into Chromium; see `tests/README.md`. Run `npm test` there before and after a change, and add a test with every bug fix. `tests/editors/` runs the content scripts against real editors (ProseMirror, Lexical, Quill, CodeMirror 6) and the settings popup; see its README.
 
-**Releasing:** add the version's section to `CHANGELOG.md` (a `## 1.5` heading), raise `version` in `manifest.json`, and push to `Revamp`. A workflow (`.github/workflows/release.yml`) then makes the release, with those notes and the extension's zip. A push that keeps the version makes none.
+**On real sites, by hand.** The tests run against the editors sites are built with, not the sites themselves. After a change to how text is read, written or measured, check: a chat app (claude.ai, ChatGPT or Gemini: select in an answer, type and use a snippet in the message box, Send), a mail app (Gmail: compose, brackets, tidy spacing), a code site (GitHub: a file, a comment box), and a notes app (Notion).
+
+**Releasing:** add the version's section to `CHANGELOG.md`, its heading exactly the version (`## 1.51` for `1.51`: the workflow stops when there is none), raise `version` in `manifest.json`, and push to `Revamp`. A workflow (`.github/workflows/release.yml`) then makes the release, with those notes and the extension's zip. A push that keeps the version makes none.
 
 ## Debugging
 

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Lighthouse",
-  "version": "1.5",
-  "description": "Look up, translate and convert selected text, and tidy what you type, right on the page.",
+  "name": "Lighthouse — Selection Toolbar",
+  "short_name": "Lighthouse",
+  "version": "1.51",
+  "description": "Takes care of the small things as you read and write online, so your attention stays on your work. No account, no tracking.",
   "minimum_chrome_version": "120",
   "permissions": [
     "activeTab",

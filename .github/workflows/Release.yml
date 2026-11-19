@@ -37,7 +37,8 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           # The version's section of the changelog: from its heading to the next one
           awk -v v="## $VERSION" '$0 == v { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
-          [ -s notes.md ] || echo "Lighthouse $VERSION" > notes.md
+          # No release without its notes: the heading must match the version exactly (1.5 is not 1.50)
+          grep -q '[^[:space:]]' notes.md || { echo "::error::CHANGELOG.md has no '## $VERSION' section. Add it, then push again."; exit 1; }
           git archive --format=zip -o "lighthouse-$VERSION.zip" HEAD
 
       - name: Release
