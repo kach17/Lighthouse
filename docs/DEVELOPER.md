@@ -96,7 +96,7 @@ The bar's state machine is in `state.js`: every change is a named event, `State.
 |---|---|
 | `HIDDEN` | Nothing to show |
 | `SELECTION` | Text selected on a page |
-| `SMART` | Text selected and a parser matched (math, currency, date, color, JSON, base64) |
+| `SMART` | Text selected and a parser matched (math, currency, date, units) |
 | `INPUT` | A field: text selected in it, or the first click into it |
 | `LINK` | A bar for something on the page: an external link pointed at; a value Convert page changed (what it was, Undo all); a highlight pointed at (Clear highlight); the text being read aloud (Pause, Speed, Stop: while reading, this bar returns whenever no other is shown). A context with `buttons` gets those. Selection changes never close it |
 | `SNIPPET_MENU` | User typed `//` and matching snippets exist. It opens with the first one chosen; ← → choose another, Tab inserts the chosen one (Enter too, so a chat doesn't send a half-typed name), Space is just a space. The chosen one looks and previews as hovering does; the strip says the keys |
@@ -141,6 +141,22 @@ Menu items (`{ label, icon, onClick }` in a preview's `items`) may have `info` t
 The background script automatically migrates new actions into existing users' settings. You don't need to touch migration.
 
 ---
+
+## Changing saved settings
+
+Settings are saved only once someone changes them; everything else comes from the defaults in `config.js`. They sync between a person's computers, which can run different versions of Lighthouse for a while, and people skip versions. So:
+
+- **Never delete automatically.** What this version doesn't know (a newer version's setting, a value it added, a button in the order) is kept, and ignored when read: `Config.validOnly` drops it from what is read, and the default applies. Deleting it would delete it for the newer version too, through sync.
+- **Add, don't reshape.** A new field older versions ignore, or a new setting, keeps every version working. Don't change what an existing setting means.
+- **Keep what you don't know when saving.** Editing an item (a snippet, an engine) keeps the fields this version doesn't use.
+- **New defaults reach only people who never changed that setting.** A new built-in item in a list people edit (a search engine) reaches only new installs, unless an update adds it to saved lists.
+
+When a reshape can't be avoided (snippets, saved as one item, will one day reach Chrome's limit of about 8 KB per synced item and need splitting):
+
+1. Save the new shape under a new name; leave the old item untouched.
+2. Read the new name first; without it, read the old item and convert it in memory. Write only when something is edited.
+3. While older versions may still run, save both, the old shape too when the data still fits it.
+4. Many versions later, stop saving the old item and delete that one name, deliberately.
 
 ## Shared tools
 
@@ -193,6 +209,10 @@ All requests go through `gatewayFetch` in `background.js`, without cookies or re
 
 `_favicon` is never web-accessible: any site could then read Chrome's favicon cache, and so which sites you've visited. Link icons in web pages come from the background (`FAVICON`) instead. The clipboard is read by the extension, never the page: `tools.readClipboard()` asks the background, which reads it in a hidden offscreen page (`src/offscreen/`). Read in the page, Chrome would prompt on every site and an allowed site would get the clipboard. Collected snippets are in `chrome.storage.session` (memory only), which only the extension can read: content scripts reach them through the `COLLECTION` service. Previews showing changing data (clipboard, collection) return `live: true` so they aren't cached.
 
+
+**Local addresses** (this computer and the private network: `localhost`, `127.0.0.1`, `192.168.…`, one-word names, `.local`) are reachable only from a page that is itself local. A public page can't make Lighthouse reach them with a link preview or a site's icon; a page not known counts as public. The page is `sender.url`, always given for Lighthouse's own scripts. `network.test.js` checks this.
+
+**Custom CSS loads nothing.** `safeCSS` in `data.js` lets the browser parse it and removes every declaration that would fetch an address (`url()`, `src()`, `image-set()` other than `data:`, and `@import`), escaped or hidden in a custom property included, so a shared theme can't report the pages it's shown on. Every theme goes through it in `resolveThemeCSS`.
 
 **Privacy lockdown** (`onDevice`): `gatewayFetch` refuses every request, so nothing goes out whatever asks. An action that uses the network says so with `network`: `'preview'` (its preview and strip info need it; a click opens a site, so it stays) or `'always'` (it is nothing without the network: hidden). Declare it on any new action that reaches a service.
 ## Parsers

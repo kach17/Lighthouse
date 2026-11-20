@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Lighthouse — Selection Toolbar",
   "short_name": "Lighthouse",
-  "version": "1.52",
+  "version": "1.53",
   "description": "Takes care of the small things as you read and write online, so your attention stays on your work. No account, no tracking.",
   "minimum_chrome_version": "120",
   "permissions": [

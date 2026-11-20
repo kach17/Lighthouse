@@ -184,6 +184,19 @@
         } catch (e) { return null; }
     },
 
+    // A link without its tracking codes (utm_…, fbclid, gclid, msclkid). Only an address standing alone (no spaces)
+    // is touched, and only when it has some: anything else comes back exactly as given
+    cleanLink: (link) => {
+        if (!link || /\s/.test(link) || !/^(https?:\/\/|www\.)/i.test(link)) return link;
+        try {
+            const bare = !/^https?:\/\//i.test(link), u = new URL(bare ? 'https://' + link : link);
+            const tracking = [...u.searchParams.keys()].filter(k => /^(utm_.*|fbclid|gclid|msclkid)$/i.test(k));
+            if (!tracking.length) return link;
+            tracking.forEach(k => u.searchParams.delete(k));
+            return bare ? u.toString().replace(/^https:\/\//, '') : u.toString();
+        } catch (e) { return link; }
+    },
+
     displayLink: (url, max = 32) => {
         try {
             const u = new URL(url);

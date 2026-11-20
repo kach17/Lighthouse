@@ -6,16 +6,14 @@
 // The actions and the settings declared in config.js (for keeping stored settings current)
 importScripts('../modules/math.js', '../utils/data.js', '../modules/actions.js', '../utils/config.js', 'qr.js');
 
-// Stored settings after an install or update. Only what needs fixing is written, so a default stays a
-// default (a later version can improve it): invalid or unknown values are removed, so their defaults apply
-// again, and new actions join the end of a stored order (removed ones leave it). New actions are on: the default.
+// After an install or update: new actions join the end of a stored order (on, the default). Nothing is deleted:
+// settings sync between versions (see "Changing saved settings" in docs/DEVELOPER.md)
 chrome.runtime.onInstalled.addListener(() => {
     const Config = self.LighthouseConfig, ids = Config.actions.map(a => a.id);
     chrome.storage.sync.get(null, (stored) => {
-        const valid = Config.validOnly(stored), invalid = Object.keys(stored).filter(k => !(k in valid));
-        if (invalid.length) chrome.storage.sync.remove(invalid);
+        const valid = Config.validOnly(stored);
         if (!valid.order) return;
-        const order = [...valid.order.filter(id => ids.includes(id)), ...ids.filter(id => !valid.order.includes(id))];
+        const order = [...valid.order, ...ids.filter(id => !valid.order.includes(id))];
         if (JSON.stringify(order) !== JSON.stringify(valid.order)) chrome.storage.sync.set({ order });
     });
     chrome.storage.local.remove('copyStack');   // the collection used to be kept on disk; it now lives in session storage
@@ -46,8 +44,7 @@ function isAllowedService(url) {
     }
 }
 
-// Loopback (localhost) stays reachable from anywhere. A private host is reachable only inside a private
-// network: private and link-local addresses, one-word names, reserved local endings.
+// Local addresses: this computer and the private network, reachable only from a local page (docs/DEVELOPER.md, Network)
 const bare = (host) => host.toLowerCase().replace(/^\[|\]$/g, '');
 const isLoopback = (host) => /^(localhost|127\.|0\.0\.0\.0$|::1$)/.test(bare(host)) || bare(host).endsWith('.localhost');
 function isPrivateHost(host) {
@@ -57,8 +54,7 @@ function isPrivateHost(host) {
         || (!h.includes('.') && !h.includes(':')) || /\.(local|internal|lan|home\.arpa)$/.test(h);
 }
 
-// from: the page that asked (anyHost fetches). A public page can't reach into the private network
-// through Lighthouse, not even by a redirect; a local page (intranet, localhost) can.
+// from: the page that asked (anyHost fetches); not known, it counts as public
 async function gatewayFetch(url, { anyHost = false, from = null, timeout = 8000, cutAt = null, post = null, image = false, file = false } = {}) {
     // Privacy lockdown: nothing goes out, whatever asked (every request Lighthouse makes passes here)
     const { onDevice } = await chrome.storage.sync.get({ onDevice: self.LighthouseConfig.defaults.onDevice });
@@ -67,9 +63,10 @@ async function gatewayFetch(url, { anyHost = false, from = null, timeout = 8000,
     try { u = new URL(url); } catch (e) { throw new Error('Invalid URL'); }
     if (!['https:', 'http:'].includes(u.protocol)) throw new Error('Unsupported protocol');
     if (!anyHost && !isAllowedService(url)) throw new Error('Not an allowed service');
-    let fromLocal = true;
-    try { const h = new URL(from).hostname; fromLocal = !from || isLoopback(h) || isPrivateHost(h); } catch (e) { /* unknown page: as local */ }
-    const blocked = (target) => anyHost && !fromLocal && isPrivateHost(new URL(target).hostname);
+    const isLocal = (host) => isLoopback(host) || isPrivateHost(host);
+    let fromLocal = false;
+    try { fromLocal = isLocal(new URL(from).hostname); } catch (e) { /* not known: public */ }
+    const blocked = (target) => anyHost && !fromLocal && isLocal(new URL(target).hostname);
     if (blocked(u.href)) throw new Error('Private network address');
     if (post !== null && !POST_SERVICES.includes(u.hostname)) throw new Error('Not an allowed service');
 
@@ -156,14 +153,14 @@ async function favicon(url, iconUrl, from) {
 // { success: false, error }. Only these services exist: a page can't ask for anything else.
 const SERVICES = {
     READ_CLIPBOARD: (r, sender) => readClipboard(sender),
-    FAVICON: (r, sender) => favicon(r.url, r.iconUrl, sender.tab && sender.tab.url),
+    FAVICON: (r, sender) => favicon(r.url, r.iconUrl, sender.url),   // sender.url: the page, always given for our own scripts
     GET_RATE: (r) => rate(r.base, r.target),
     TRANSLATE: async (r) => ({ result: await translateText(r.text, r.targetLang) }),
     OPEN_SETTINGS: () => chrome.action.openPopup(),   // Chrome 127+; before, the request just fails
     DEFINE: (r) => define(r.text, r.wordLang, r.targetLang, r.readerLangs),
     SPELLCHECK: (r) => spellcheck(r.text, r.language),
     WIKI_SUMMARY: (r) => wikiSummary(r.lang, r.title),
-    LINK_PREVIEW: (r, sender) => linkPreview(r.url, sender.tab && sender.tab.url),
+    LINK_PREVIEW: (r, sender) => linkPreview(r.url, sender.url),
     QR: async (r) => ({ result: await qrImage(r.text) }),
     // Collect and Paste: the collection, read, or replaced when items are given
     COLLECTION: async (r) => Array.isArray(r.items) ? (await chrome.storage.session.set({ copyStack: r.items }), {})

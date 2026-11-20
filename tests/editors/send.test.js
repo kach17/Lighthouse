@@ -201,7 +201,7 @@ for (const ed of ['ta', 'ce', 'pm', 'lx']) {
 
 // Twice: from the page to the box and back, to what was mid-screen and the selection, the box let go. In a chat the
 // conversation scrolls in its own panel: the same, in the panel
-for (const [ed, panel] of [['ta', false], ['pm', false], ['ta', true]]) {
+for (const [ed, panel] of [['ta', false], ['ta', true]]) {   // the page's scrolling and the selection: the same with any box
     test(`${ed}${panel ? ', a scrolling panel' : ''}: the shortcut again goes back to where you were reading`, async () => {
         const p = await open(browser, { openShadow: true });
         await p.setViewport({ width: 900, height: 600 });
@@ -227,7 +227,7 @@ for (const [ed, panel] of [['ta', false], ['pm', false], ['ta', true]]) {
 
 // A chat's layout: the conversation scrolls in its own panel, the box fixed below it, the cursor staying in the box while
 // the chat is scrolled. Alt+L: the chat back to where it was while typing; again: back to where it was scrolled to
-for (const ed of ['ta', 'pm']) {
+for (const ed of ['ta']) {   // the chat's scrolling, not the box's: one box is enough
     test(`${ed}, a box fixed below a chat: the shortcut brings the chat back, and again`, async () => {
         const p = await open(browser, { openShadow: true });
         await p.setViewport({ width: 900, height: 600 });

@@ -53,7 +53,7 @@
         temperature: { metric: ['c'], imperial: ['f'] }
     };
 
-    // 3. Smart Snapping Pairs
+    // 3. Pairs: brackets and quotes (whole-word selection includes the closing one; typed over a selection, they wrap it)
     const SNAPPING_PAIRS = {
         '(': ')', '[': ']', '{': '}',
         '"': '"', "'": "'",
@@ -65,11 +65,10 @@
         return acc;
     }, {});
 
-    // 4. Supported Languages for Translation/UI
     // Characters that wrap a selection when typed, with their closing counterpart
     const WRAP_PAIRS = { "'": "'", '"': '"', '(': ')', '[': ']', '{': '}', '<': '>' };
 
-    // Languages Lighthouse offers (translation targets). Names come from the browser, in the user's own language.
+    // 4. Languages Lighthouse offers (translation targets). Names come from the browser, in the user's own language.
     const LANGUAGES = ['en', 'es', 'fr', 'de', 'it', 'pt', 'zh', 'ja', 'ko', 'ru', 'hi', 'ar', 'bn', 'ur', 'fa', 'tr', 'pl', 'nl', 'sv', 'no', 'da', 'fi', 'cs', 'el', 'he', 'uk', 'ro', 'hu', 'id', 'ms', 'fil', 'th', 'vi', 'ta', 'te', 'mr', 'gu', 'kn', 'ml', 'pa', 'sw'];
 
     // 5. Dates
@@ -127,7 +126,7 @@
         return vocab;
     }
 
-    // 6. Icons (Moved from actions.js)
+    // 6. Icons
     const ICONS = {
         grip: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>`,
         trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l.9 12.2A2 2 0 0 0 9.4 21h5.2a2 2 0 0 0 2-1.8L17.5 7"/></svg>`,
@@ -156,9 +155,6 @@
         refresh: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>`,
         link: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>`,
         calendar: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`,
-        code: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
-        palette: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"></circle><circle cx="17.5" cy="10.5" r=".5"></circle><circle cx="8.5" cy="7.5" r=".5"></circle><circle cx="6.5" cy="12.5" r=".5"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>`,
-        lock: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>`,
         highlighter: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>`,
         spellcheck: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 6-12 6 12"></path><path d="M8 12h8"></path><path d="m16 20 2 2 4-4"></path></svg>`,
         check: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
@@ -213,12 +209,34 @@
 }`;
     }
 
+    // Custom CSS loads nothing. It is a theme (colors), so nothing in it needs an address, and a shared one could
+    // otherwise report every page it's shown on. The browser parses it, which undoes escapes (\75 rl( is url() and
+    // drops @import; then every declaration that loads anything goes: nested ones, @font-face, custom properties (var()
+    // can carry them anywhere) and rules like @property included. CSS that needed nothing removed is kept as written
+    const LOADS = /\b(url|src|image-set)\(/i;
+    const unescaped = (v) => v.replace(/\\([0-9a-f]{1,6}\s?|[^\n0-9a-f])/gi, (m, e) => /^[0-9a-f]/i.test(e) ? String.fromCodePoint(parseInt(e, 16)) : e);
+    function safeCSS(css) {
+        if (!css || typeof CSSStyleSheet === 'undefined') return css || '';
+        const sheet = new CSSStyleSheet();
+        try { sheet.replaceSync(css); } catch (e) { return ''; }
+        let changed = /@import/i.test(css);
+        (function clean(owner) {
+            for (let i = owner.cssRules.length - 1; i >= 0; i--) {
+                const rule = owner.cssRules[i];
+                if (rule.style) for (const p of [...rule.style]) if (LOADS.test(unescaped(rule.style.getPropertyValue(p)))) { rule.style.removeProperty(p); changed = true; }
+                if (rule.cssRules) clean(rule);
+                else if (!rule.style && LOADS.test(unescaped(rule.cssText))) { owner.deleteRule(i); changed = true; }
+            }
+        })(sheet);
+        return changed ? [...sheet.cssRules].map(r => r.cssText).join('\n') : css;
+    }
+
     /**
      * The one place that decides the active theme CSS. The bar and the popup
      * both call it, so they can never disagree.
      */
     function resolveThemeCSS(settings = {}) {
-        if (settings.customStyles && settings.customStyles.trim()) return settings.customStyles;
+        if (settings.customStyles && settings.customStyles.trim()) return safeCSS(settings.customStyles);
         return cssFromTheme(THEMES[settings.themeMode] || THEMES.light);
     }
 
@@ -243,7 +261,8 @@
         getDateVocabulary,
         THEMES,
         cssFromTheme,
-        resolveThemeCSS
+        resolveThemeCSS,
+        safeCSS
     };
 
 })(typeof self !== 'undefined' ? self : window);

@@ -23,14 +23,15 @@
     { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com/results?search_query=%s', icon: 'youtube', enabled: true },
     { id: 'maps', name: 'Maps', url: 'https://www.google.com/maps/search/%s', icon: 'maps', enabled: true },
     { id: 'wikipedia', name: 'Wikipedia', url: 'https://en.wikipedia.org/wiki/Special:Search?search=%s', icon: 'wikipedia', enabled: false },
-    { id: 'reddit', name: 'Reddit', url: 'https://www.reddit.com/search/?q=%s', icon: 'reddit', enabled: false }
+    { id: 'reddit', name: 'Reddit', url: 'https://www.reddit.com/search/?q=%s', icon: 'reddit', enabled: false },
+    { id: 'chatgpt', name: 'ChatGPT', url: 'https://chatgpt.com/?q=%s', icon: 'search', enabled: false }
   ];
 
   // Buttons a new bar starts without: of little use to most people, or (Spelling) sending what you write to a server
-  const OFF_BY_DEFAULT = ['stack', 'spellcheck', 'math', 'json_format', 'base64_decode', 'color_convert'];
+  const OFF_BY_DEFAULT = ['stack', 'spellcheck', 'math'];
   // The order a new bar starts in; an action not listed (a new one) comes after
   const ORDER = ['copy', 'send', 'stack', 'search', 'translate', 'dictionary', 'wikipedia', 'speak', 'marker', 'expand', 'qr', 'cut', 'paste',
-    'translate_to', 'delete', 'clear', 'spellcheck', 'math', 'currency', 'reminder', 'json_format', 'base64_decode', 'color_convert', 'unit', 'case'];
+    'translate_to', 'delete', 'clear', 'spellcheck', 'math', 'currency', 'reminder', 'unit', 'case'];
   const ids = actionsList.map(a => a.id);
   // Every setting, declared once: its default, and the values it can take (options), so every reader
   // gets the same default and an imported file can only set what exists, with a value of the right kind

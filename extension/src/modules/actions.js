@@ -16,6 +16,7 @@
     // The language a selection is read in, as a base code ('de'): its own if known, else the user's
     const baseLanguage = (ctx) => Data.baseLanguage(ctx.language || userLanguage());
     const buildUrl = (template, text) => template.replace('%s', encodeURIComponent(text));
+    const SEARCH_MAX = 2000;   // longer, a search address fails (servers refuse it): Search isn't offered
 
 
     // --- DATES ---
@@ -299,6 +300,9 @@
             category: 'selection',
             icon: 'stack',
             condition: (ctx) => ctx.hasText,
+            // With something collected already, it adds to it: "Collect more", "3 collected so far"
+            dynamicLabel: async (ctx, tools) => (await tools.collection.get()).length ? 'Collect more' : null,
+            info: async (ctx, tools) => { const n = (await tools.collection.get()).length; return n ? `${n} collected so far` : null; },
             execute: async (ctx, tools) => {
                 const items = [...await tools.collection.get(), ctx.text];
                 await tools.collection.set(items);
@@ -333,7 +337,7 @@
             label: 'Search',
             category: 'selection',
             icon: 'search',
-            condition: (ctx) => ctx.hasText,
+            condition: (ctx) => ctx.hasText && ctx.text.length <= SEARCH_MAX,
             engines() { return setting('searchEngines').filter(e => e.enabled); },
             info() {
                 const [engine] = this.engines();
@@ -822,75 +826,6 @@
                         onClick: () => ctx.tools.open(this.calendarUrl(date, parsed.hasTime))
                     }))
                 };
-            }
-        },
-        {
-            id: 'json_format',
-            label: 'Format JSON',
-            category: 'smart',
-            icon: 'code',
-            // The selection as JSON (an object or array), or null
-            json: (ctx) => getParsed(ctx, 'json', () => { const t = ctx.cleanText; if (t.length < 2 || !/^[{[]/.test(t)) return null; try { return JSON.parse(t); } catch (e) { return null; } }),
-            condition(ctx) { return this.json(ctx) !== null; },
-            execute(ctx, tools) {
-                const pretty = JSON.stringify(this.json(ctx), null, 2);
-                tools.place(pretty);
-                return { success: true, message: 'JSON formatted' };
-            },
-            preview(ctx) {
-                const obj = this.json(ctx);
-                return { previewText: `Valid JSON (${Array.isArray(obj) ? obj.length + ' items' : Object.keys(obj).length + ' keys'})` };
-            }
-        },
-        {
-            id: 'base64_decode',
-            label: 'Decode',
-            category: 'smart',
-            icon: 'lock',
-            // The decoded text, only if it is readable (plain words like "Unix" decode to byte garbage), or null
-            decoded: (ctx) => getParsed(ctx, 'base64', () => {
-                const t = ctx.cleanText;
-                if (t.length < 4 || t.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(t)) return null;
-                try { const raw = atob(t); return /[\x00-\x08\x0E-\x1F]/.test(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(raw, c => c.charCodeAt(0)))) ? null : raw; } catch (e) { return null; }
-            }),
-            condition(ctx) { return this.decoded(ctx) !== null; },
-            execute(ctx, tools) {
-                tools.place(this.decoded(ctx));
-                return { success: true, message: 'Base64 decoded' };
-            },
-            preview(ctx, tools) { return tools.buildCopyMenu(this.decoded(ctx), `"${Utils.shorten(this.decoded(ctx), 20)}"`); }
-        },
-        {
-            id: 'color_convert',
-            label: 'Color',
-            category: 'smart',
-            icon: 'palette',
-            // "#ff0000" or "rgb(255, 0, 0)": { original, converted }, or null
-            // Explicit color syntax only (never a word like "red"), read by the browser itself: hex becomes rgb(),
-            // rgb() and hsl() become hex (with its transparency, if any)
-            parse(text) {
-                const t = text.trim(), style = new Option().style;
-                if (!/^(#([\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})|(rgba?|hsla?)\([^)]*\))$/i.test(t)) return null;
-                style.color = t;
-                const n = style.color.match(/[\d.]+/g);   // as the browser writes it: rgb(r, g, b) or rgba(r, g, b, a)
-                if (!n) return null;
-                const hex = '#' + [...n.slice(0, 3).map(Number), ...(n[3] !== undefined ? [Math.round(n[3] * 255)] : [])].map(v => v.toString(16).padStart(2, '0')).join('');
-                return { original: t, converted: t.startsWith('#') ? style.color : hex };
-            },
-            parsed(ctx) { return getParsed(ctx, 'color', () => this.parse(ctx.text)); },
-            condition(ctx) { return this.parsed(ctx) !== null; },
-            execute(ctx, tools) {
-                tools.place(this.parsed(ctx).converted);
-                return { success: true, message: 'Color converted' };
-            },
-            preview(ctx, tools) {
-                const parsed = this.parsed(ctx);
-                if (!parsed) return null;
-                const { original, converted } = parsed;
-                const swatch = Utils.create('span', { className: 'lh-swatch' });
-                swatch.style.setProperty('--swatch', original);
-                const node = Utils.create('div', { className: 'lh-row', children: [swatch, Utils.create('span', { className: 'is-value', text: original })] });
-                return tools.buildCopyMenu(converted || original, { node }, 'Copy converted');
             }
         }
     ];

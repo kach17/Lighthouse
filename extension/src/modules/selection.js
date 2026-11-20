@@ -20,28 +20,11 @@
         // 1. Invisible characters (Zero-width space, Soft hyphen, BOM)
         text = text.replace(/[\u200B\u00AD\uFEFF]/g, '');
 
-        // 2. URL Cleanup
-        if (text.match(/^https?:\/\//) || text.match(/^www\./)) {
-            try {
-                let urlObj = new URL(text.startsWith('www.') ? 'https://' + text : text);
-                const paramsToRemove = ['fbclid', 'gclid', 'msclkid'];
-                const keys = Array.from(urlObj.searchParams.keys());
-                
-                keys.forEach(key => {
-                    if (paramsToRemove.includes(key) || key.startsWith('utm_')) {
-                        urlObj.searchParams.delete(key);
-                    }
-                });
-                text = urlObj.toString();
-            } catch (e) {
-                 const regex = new RegExp(`([?&])(utm_[^&=]*|fbclid|gclid|msclkid)=[^&]*`, 'gi');
-                 text = text.replace(regex, '');
-                 text = text.replace(/[?&]$/, '').replace(/\?&/, '?').replace(/&&/, '&');
-            }
-        }
-
-        // 3. Normalization (Non-breaking spaces to space, trim)
+        // 2. Normalization (Non-breaking spaces to space, trim)
         text = text.replace(/\u00A0/g, ' ').trim();
+
+        // 3. A link selected alone, without its tracking codes
+        text = window.LighthouseUtils.cleanLink(text);
 
         return text;
     }

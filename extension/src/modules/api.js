@@ -70,8 +70,9 @@
      * 2. The Toolkit
      */
     // The one clipboard write
+    // Every Copy: a link copied alone comes without its tracking codes (anything else exactly as given)
     function copy(text) {
-        if (navigator.clipboard) navigator.clipboard.writeText(String(text)).catch(e => console.warn('Lighthouse: Clipboard blocked', e));
+        if (navigator.clipboard) navigator.clipboard.writeText(window.LighthouseUtils.cleanLink(String(text))).catch(e => console.warn('Lighthouse: Clipboard blocked', e));
     }
 
     function getTools(ctx) {

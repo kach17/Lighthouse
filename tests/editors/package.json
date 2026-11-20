@@ -6,7 +6,7 @@
     "build": "esbuild fixtures/editors.js --bundle --outfile=build/editors.js --log-level=warning",
     "pretest": "npm run build",
     "test": "node --test --test-concurrency=1",
-    "test:fast": "node --test units.test.js offscreen.test.js",
+    "test:fast": "node --test units.test.js offscreen.test.js network.test.js",
     "test:editing": "npm run build && node --test --test-concurrency=1 brackets.test.js tidy.test.js owed-space.test.js rich-text.test.js undo.test.js code-editor.test.js",
     "test:writing": "npm run build && node --test --test-concurrency=1 snippets.test.js send.test.js",
     "test:geometry": "npm run build && node --test --test-concurrency=1 handles.test.js caret-bar.test.js snapping.test.js selection-text.test.js",

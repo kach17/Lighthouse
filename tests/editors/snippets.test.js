@@ -44,7 +44,9 @@ const MENU = [
     ['//addr', [' '], '//addr '],                                        // Space is a space
     ['//ad', ['Escape', 'ArrowLeft', 'x'], '//axd'],                     // closed, the arrows are the text's again
 ];
-for (const ed of ['ta', 'pm', 'lx']) for (const [name, keys, want] of MENU) {
+// The menu's keys are Lighthouse's own, the same in every box: all of them in one. Enter in the editors too, where it
+// means a new line to the editor itself (each editor's insertion: "Tab inserts a snippet", above)
+for (const [ed, name, keys, want] of [...MENU.map(m => ['ta', ...m]), ...['pm', 'lx'].map(ed => [ed, ...MENU.find(m => m[1][0] === 'Enter')])]) {
     test(`${ed}: ${name} then ${keys.join(' ')}`, async () => {
         assert.strictEqual(await typed(ed, async (p) => { await type(p, name); await wait(250); for (const k of keys) k.length === 1 ? await type(p, k) : await press(p, k); }), want);
     });

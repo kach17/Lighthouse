@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.53
+
+- ChatGPT is now one of the search options: switch it on in Settings → Search to ask it about what you select.
+- Search isn't offered for a selection too long to search (over 2,000 characters), where it could only fail.
+- Safer link previews: a website can no longer make Lighthouse reach programs on your own computer (localhost) when you point at a link.
+- Custom CSS can't load anything from the internet, so a shared theme can't report which pages you visit.
+- Every Copy now removes a link's tracking codes, the link bar's included (before, only copying a selected link did).
+- Selecting a sentence that starts with a link no longer changes its spaces into %20.
+
 ## 1.52
 
 - Pages start faster: Lighthouse now loads its word data only when you first select or type.
